@@ -105,8 +105,10 @@ class ExecutionRunner:
                            on_terminate=wrapped.terminate)
         try:
             async for ev in self.pm.stream(spec, cancel=cancel):
-                if ev.kind == "started" and ev.start and attempt_id and self.on_process_start:
-                    self.on_process_start(attempt_id, ev.start)
+                if ev.kind == "started" and ev.start:
+                    ev.start.identity = wrapped.identity
+                    if attempt_id and self.on_process_start:
+                        self.on_process_start(attempt_id, ev.start)
                 yield ev
         finally:
             wrapped.cleanup()

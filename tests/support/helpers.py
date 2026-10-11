@@ -95,3 +95,47 @@ def scripted_policy(scenario: Path, *, isolation: str = "userns", agents: dict[s
     orch.update(orchestrator or {})
     return parse_policy({"version": 1, "orchestrator": orch, "agents": ag, "execution": ex, "validation": val,
                          "git": {"auto_integrate": True, "auto_push": False, "protect_default_branch": True}})
+
+
+# ---------------------------------------------------------------------------------------------
+from multigenz.contracts.task import PlanDocument, TaskSpec  # noqa: E402
+
+
+def T(task_id: str, paths: list[str] | str, deps: list[str] | None = None, caps: list[str] | None = None,
+      **kw) -> TaskSpec:
+    paths = [paths] if isinstance(paths, str) else paths
+    return TaskSpec(task_id=task_id, title=f"Task {task_id}", objective=f"Implement {task_id}",
+                    allowed_paths=paths, dependencies=deps or [], required_capabilities=set(caps or []), **kw)
+
+
+def plan_of(*tasks: TaskSpec) -> PlanDocument:
+    return PlanDocument(tasks=list(tasks))
+
+
+def writes(path: str, content: str, **extra) -> dict:
+    return {"attempts": {"default": [{"write": {path: content}, **extra}]}}
+
+
+def overlap_seconds(a: dict, b: dict) -> float:
+    from datetime import datetime
+
+    def t(x):
+        return datetime.fromisoformat(x.replace("Z", "+00:00")).timestamp()
+
+    return min(t(a["finished_at"]), t(b["finished_at"])) - max(t(a["started_at"]), t(b["started_at"]))
+
+
+def max_concurrency(attempts: list[dict]) -> int:
+    from datetime import datetime
+
+    def t(x):
+        return datetime.fromisoformat(x.replace("Z", "+00:00")).timestamp()
+
+    edges = []
+    for a in attempts:
+        edges += [(t(a["started_at"]), 1), (t(a["finished_at"]), -1)]
+    cur = best = 0
+    for _, d in sorted(edges):
+        cur += d
+        best = max(best, cur)
+    return best

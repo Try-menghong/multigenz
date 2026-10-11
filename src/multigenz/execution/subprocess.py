@@ -54,6 +54,7 @@ class ProcessStart:
     pid: int
     pgid: int
     start_ticks: str | None
+    identity: str = ""
 
 
 @dataclass
