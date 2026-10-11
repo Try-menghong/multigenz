@@ -71,7 +71,11 @@ checks sequence, hash chain, transition legality and equality with the stored st
 ## Running with real Claude Code
 1. Install and verify the CLI: `claude --version`. Authentication: use an API key (`ANTHROPIC_API_KEY`); it is injected only
    into the sandbox of the agent that lists it under `credentials.env`. (Interactive OAuth login files can be granted with
-   `credentials.files`, but they are mounted read-only, so token refresh inside the sandbox will not work.)
+   `credentials.files`, but they are mounted read-only, so token refresh inside the sandbox will not work, and a refresh
+   attempted from the sandbox could invalidate your host login — prefer the token below.)
+   **Subscription (Pro/Max), no API key:** run `claude setup-token` on the host, export the token it prints as
+   `CLAUDE_CODE_OAUTH_TOKEN` and list that name under `credentials.env`. Subscription usage limits are shared by all
+   parallel agents, and whether automated use fits your plan's terms is for you to check. Untested against the live service.
 2. Start from `config/policy.claude.example.yaml`. `network: host` is required for the agent to reach the API (name
    resolution is provided read-only from the host); it means the agent has unrestricted network access.
 3. Point `validation.profiles` at your repository's real test command. The repository needs at least one test already

@@ -15,6 +15,8 @@ agents:
     capabilities: [architecture, coding, testing, review]
     credentials:
       env: [ANTHROPIC_API_KEY]    # injected into THIS agent's sandbox only; redacted from every log/event/report
+      # Claude Pro/Max subscription instead of an API key: run `claude setup-token` once, export the token it prints as
+      # CLAUDE_CODE_OAUTH_TOKEN, and list THAT here instead (e.g. env: [CLAUDE_CODE_OAUTH_TOKEN]).
 execution:
   isolation: userns
   network: host                   # Claude must reach the API. UNRESTRICTED network for the agent (see docs/SECURITY.md)
