@@ -103,3 +103,12 @@ def test_enable_claude_pytest_script_edits_a_policy_safely(tmp_path):
     assert (tmp_path / "my-policy.yaml.bak").read_text() == src
     again = run()
     assert again.returncode == 1 and "already exists" in again.stdout  # idempotent: never adds a second block
+    for form in ("python -m pytest", "pytest", "python3 -B -m pytest", "/usr/bin/python3 -m pytest"):
+        assert f"Bash({form}:*)" in f.read_text()  # every spelling Claude actually uses is allowed
+    # a policy written by the earlier single-pattern version is upgraded in place
+    old = tmp_path / "old.yaml"
+    old.write_text(f.read_text().replace(
+        f.read_text().split('"--allowedTools", ')[1].split(', "--no-session-persistence"')[0], '"Bash(python3 -m pytest:*)"'))
+    up = subprocess.run([sys.executable, str(REPO_ROOT / "scripts" / "enable_claude_pytest.py"), str(old)], capture_output=True, text=True)
+    assert up.returncode == 0 and "Bash(pytest:*)" in old.read_text(), up.stdout + up.stderr
+    assert [i.name for i in load_policy(old).agents["claude"].invocations] == ["print-accept-edits-pytest", "print-plan"]

@@ -24,7 +24,8 @@ agents:
     # invocations:
     #   - name: print-accept-edits-pytest
     #     argv: ["{command}", "--print", "--permission-mode", "acceptEdits",
-    #            "--allowedTools", "Bash(python3 -m pytest:*)", "--no-session-persistence"]
+    #            "--allowedTools", "Bash(python3 -m pytest:*)", "Bash(python -m pytest:*)", "Bash(python3 -B -m pytest:*)",
+    #            "Bash(python -B -m pytest:*)", "Bash(/usr/bin/python3 -m pytest:*)", "Bash(pytest:*)", "--no-session-persistence"]
     #     stdin: prompt
     #     requires_help_tokens: ["--print", "--permission-mode", "\"acceptEdits\"", "--allowedTools", "--no-session-persistence"]
     #     modes: [code, conflict]

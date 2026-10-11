@@ -13,9 +13,10 @@ import shutil
 import sys
 from pathlib import Path
 
+OLD_ALLOW = '"--allowedTools", "Bash(python3 -m pytest:*)", "--no-session-persistence"'
 BLOCK = '''    invocations:
       - name: print-accept-edits-pytest
-        argv: ["{command}", "--print", "--permission-mode", "acceptEdits", "--allowedTools", "Bash(python3 -m pytest:*)", "--no-session-persistence"]
+        argv: ["{command}", "--print", "--permission-mode", "acceptEdits", "--allowedTools", "Bash(python3 -m pytest:*)", "Bash(python -m pytest:*)", "Bash(python3 -B -m pytest:*)", "Bash(python -B -m pytest:*)", "Bash(/usr/bin/python3 -m pytest:*)", "Bash(pytest:*)", "--no-session-persistence"]
         stdin: prompt
         requires_help_tokens: ["--print", "--permission-mode", "\\"acceptEdits\\"", "--allowedTools", "--no-session-persistence"]
         modes: [code, conflict]
@@ -25,6 +26,11 @@ BLOCK = '''    invocations:
         requires_help_tokens: ["--print", "--permission-mode", "\\"plan\\"", "--no-session-persistence"]
         modes: [plan, review, analysis]
 '''
+
+
+_m = re.search(r'"--allowedTools", .*?, "--no-session-persistence"', BLOCK)
+assert _m, "BLOCK has no --allowedTools list"
+NEW_ALLOW = _m.group(0)
 
 
 def indent(line: str) -> int:
@@ -38,6 +44,19 @@ def main() -> int:
     path = Path(sys.argv[1])
     attempts = sys.argv[2] if len(sys.argv) > 2 else "4"
     lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    text0 = "".join(lines)
+    if OLD_ALLOW in text0:  # upgrade a policy written by an earlier version of this script
+        shutil.copy(path, str(path) + ".bak")
+        path.write_text(text0.replace(OLD_ALLOW, NEW_ALLOW), encoding="utf-8")
+        try:
+            from multigenz.config import load_policy
+            load_policy(path)
+        except Exception as exc:  # noqa: BLE001
+            shutil.copy(str(path) + ".bak", path)
+            print(f"result was not a valid policy ({exc}); original restored")
+            return 1
+        print(f"ok: widened the pytest allowance; backup at {path}.bak")
+        return 0
     if any(re.match(r"^ {4}invocations:", l) for l in lines):
         print("an uncommented `invocations:` already exists under the agent; not adding another")
         return 1
