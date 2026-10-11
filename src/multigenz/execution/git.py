@@ -182,6 +182,14 @@ class Git:
                 conflicts.append(line.strip())
         return MergeTreeResult(clean=r.returncode == 0, tree=tree, conflicts=conflicts, output=r.stdout)
 
+    def find_commit_with_trailer(self, ref: str, key: str, value: str) -> str | None:
+        """First commit reachable from ``ref`` whose message has the exact trailer ``key: value``."""
+        r = self.run("log", ref, "--format=%H", "-n", "1", "--fixed-strings", f"--grep={key}: {value}", check=False)
+        return r.stdout.strip() or None if r.returncode == 0 else None
+
+    def tree_of(self, commit: str) -> str:
+        return self.out("rev-parse", f"{commit}^{{tree}}")
+
     def ff_merge(self, git_dir: Path, work_tree: Path, sha: str) -> None:
         """Fast-forward a checked-out run branch (never rewrites history)."""
         self.run("merge", "--ff-only", "--quiet", sha, git_dir=git_dir, work_tree=work_tree)
@@ -220,17 +228,29 @@ class Git:
             i += 2
         return changes
 
-    def added_lines(self, base: str, head: str, limit_bytes: int = 2_000_000) -> list[tuple[str, str]]:
+    def diff_lines(self, base: str, head: str, limit_bytes: int = 2_000_000) -> list[tuple[str, str, str]]:
+        """(path, '+'|'-', text) for every added/removed line."""
         out = self.run("diff", "--unified=0", "--no-color", "--no-ext-diff", "--no-textconv",
                        "--no-renames", base, head).stdout[:limit_bytes]
-        res: list[tuple[str, str]] = []
+        res: list[tuple[str, str, str]] = []
         path = ""
         for line in out.splitlines():
             if line.startswith("+++ "):
                 path = line[4:].removeprefix("b/")
-            elif line.startswith("+") and not line.startswith("+++"):
-                res.append((path, line[1:]))
+            elif line.startswith("--- "):
+                if line[4:] != "/dev/null":
+                    path = line[4:].removeprefix("a/")
+            elif line.startswith("+") :
+                res.append((path, "+", line[1:]))
+            elif line.startswith("-"):
+                res.append((path, "-", line[1:]))
         return res
+
+    def added_lines(self, base: str, head: str, limit_bytes: int = 2_000_000) -> list[tuple[str, str]]:
+        return [(p, t) for p, k, t in self.diff_lines(base, head, limit_bytes) if k == "+"]
+
+    def diff_text(self, base: str, head: str, limit: int = 60_000) -> str:
+        return self.run("diff", "--no-color", "--no-ext-diff", "--no-textconv", "--stat", "-p", base, head).stdout[:limit]
 
     def blob_sizes(self, shas: list[str]) -> dict[str, int]:
         if not shas:

@@ -50,12 +50,17 @@ def build_report(store: Store, run_id: str) -> dict:
             {"task_id": e["task_id"], "attempt_id": e["attempt_id"], "passed": e["payload"].get("passed"),
              "reports": e["payload"].get("test_reports", [])}
             for e in validations],
+        "planning": {
+            "rejections": [e["payload"] for e in store.events(run_id, kinds=("plan.rejected",))],
+            "failure": next(iter([e["payload"] for e in store.events(run_id, kinds=("plan.failed",))]), None),
+            "agent_failures": [e["payload"] for e in store.events(run_id, kinds=("plan.agent_failed",))],
+        },
         "final_tests": [e["payload"] for e in store.events(run_id, kinds=("integration.final_tests",))],
         "integrations": [{k: i[k] for k in ("task_id", "status", "candidate_commit", "result_commit", "detail")}
                          for i in store.list_integrations(run_id)],
         "artifacts": [{k: a[k] for k in ("kind", "path", "sha256", "task_id")} for a in store.list_artifacts(run_id)],
         "cost": {
-            "measured_usd": round(sum(measured), 6) if measured else 0.0,
+            "measured_usd": round(float(run["spent_usd"] or 0), 6),
             "budget_usd": run["budget_usd"],
             "unknown_for_attempts": len(unknown),
             "unknown_providers": providers,
@@ -77,6 +82,8 @@ def render_markdown(r: dict) -> str:
     for t in r["tasks"]:
         lines.append(f"| {t['task_id']} | {t['status']} | {t['provider'] or '-'} | {t['attempts']} | "
                      f"{(t['integrated_commit'] or t['head_commit'] or '-')[:12]} | {t['failure_reason'] or ''} |")
+    if r["planning"]["failure"]:
+        lines += ["", "## Plan rejected", ""] + [f"- {i}" for i in r["planning"]["failure"]["issues"]]
     lines += ["", "## Tests / validation", ""]
     for tr in r["test_reports"]:
         lines.append(f"- {tr['task_id']} (attempt {tr['attempt_id']}): {'PASS' if tr['passed'] else 'FAIL'}")

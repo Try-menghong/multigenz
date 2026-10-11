@@ -122,10 +122,12 @@ async def test_at10_merge_conflict_resolved_in_isolation_preserving_both_sides(t
     assert git(repo, "show", f"{integ}:config.txt") == "base\nfrom-a\nfrom-b"
     ia, ib = st.list_attempts(rid, "a"), st.list_attempts(rid, "b")
     assert [x["kind"] for x in ib] == ["code", "conflict"] and len(ia) == 1
-    # original commits of BOTH sides are untouched and contained in the final history
+    # original commits of BOTH sides are untouched on their branches; provenance is recorded on the integration commits
     for x in (ia[0], ib[0]):
         assert git(repo, "rev-parse", x["branch"]) == x["commit_sha"]
-        assert subprocess.run(["git", "merge-base", "--is-ancestor", x["commit_sha"], integ], cwd=repo).returncode == 0
+    trailers = git(repo, "log", f"main..{integ}", "--format=%(trailers:key=Multigenz-Task,valueonly)").split()
+    assert sorted(trailers) == ["a", "b"]
+    assert git(repo, "rev-list", "--count", "--merges", f"main..{integ}") == "0"  # linear history of tested trees
     res_commit = ib[1]["commit_sha"]
     parents = git(repo, "rev-list", "--parents", "-n", "1", res_commit).split()[1:]
     assert len(parents) == 2 and ib[0]["commit_sha"] in parents

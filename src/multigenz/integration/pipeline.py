@@ -12,6 +12,7 @@ from multigenz.execution.git import Git
 from multigenz.execution.manager import ExecutionRunner
 from multigenz.integration.merger import IntegrationResult, Merger
 from multigenz.integration.profiles import ProfileRunner
+from multigenz.integration.reviewer import AgentReviewer, DiffReviewer
 from multigenz.integration.validator import DiffValidator
 
 MARKERS = ("<<<<<<< ", ">>>>>>> ", "\n=======\n")
@@ -19,12 +20,14 @@ MARKERS = ("<<<<<<< ", ">>>>>>> ", "\n=======\n")
 
 class IntegrationPipeline:
     def __init__(self, git: Git, policy: Policy, redactor: Redactor, merger: Merger, *,
-                 runner: ExecutionRunner | None = None, paths=None):
+                 runner: ExecutionRunner | None = None, paths=None, agent_reviewer: AgentReviewer | None = None):
         self.git = git
         self.policy = policy
         self.redactor = redactor
         self.merger = merger
         self.diff = DiffValidator(git, policy, redactor)
+        self.reviewer = DiffReviewer(git)
+        self.agent_reviewer = agent_reviewer
         self.profiles = ProfileRunner(runner, policy, paths.run_dir / "tests") if runner and paths else None
 
     # -- helpers --------------------------------------------------------------------------
@@ -45,9 +48,14 @@ class IntegrationPipeline:
     # -- validation -----------------------------------------------------------------------------
     async def validate(self, task: TaskSpec, base: str, head: str, *, attempt_id: str,
                        cancel=None) -> ValidationResult:
+        # 1. everything that does not execute candidate code (reported together for useful feedback)
         checks, paths = self.diff.validate(task, base, head)
+        if self.policy.validation.require_diff_review and self.git.rev_parse(head) is not None \
+                and self.git.is_ancestor(base, head):
+            checks += self.reviewer.review(task, base, head)
         reports: list[TestReport] = []
-        if all(c.passed for c in checks):  # never execute code from a result that already violates policy
+        # 2. only a policy-clean result is ever executed (tests), then optionally shown to a reviewer agent
+        if all(c.passed for c in checks):
             profile = self._profile_for(task)
             miss = self._tests_check(profile, f"task {task.task_id}")
             if miss is not None:
@@ -58,6 +66,11 @@ class IntegrationPipeline:
                 reports.append(rep)
                 checks.append(CheckResult(name=f"tests[{profile}]", passed=rep.passed,
                                           detail="" if rep.passed else "test profile failed"))
+        if all(c.passed for c in checks) and self.policy.validation.require_diff_review \
+                and self.policy.validation.review_with_agent and self.agent_reviewer:
+            verdict = await self.agent_reviewer.review(task, base, head)
+            if verdict is not None:
+                checks.append(verdict)
         return ValidationResult(passed=all(c.passed for c in checks), checks=checks, changed_paths=paths,
                                 test_reports=reports)
 

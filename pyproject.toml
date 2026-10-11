@@ -36,6 +36,7 @@ packages = ["src/multigenz"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+norecursedirs = ["fixtures", ".git", ".venv", "dist", "build", "*.egg-info"]
 addopts = "-ra"
 markers = [
   "acceptance: AT-01..AT-16 from docs/IMPLEMENTATION_PLAN.md",

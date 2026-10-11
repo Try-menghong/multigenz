@@ -4,6 +4,11 @@ The merge result is computed with ``git merge-tree --write-tree`` (no worktree t
 resulting tree is exported and independently tested, and only then is a commit created and the
 integration branch fast-forwarded. A failing or conflicting change therefore never enters the
 branch, neither side of a conflict is ever modified, and nothing is reset or force-updated.
+
+Each validated task lands as ONE commit whose tree is exactly the tree that was tested; the
+intermediate attempt snapshots (possibly broken, possibly containing material a later attempt
+removed) stay on their own attempt branches and never enter the integration history. Provenance is
+kept in commit trailers (Multigenz-Task / -Attempt / -Candidate).
 """
 
 from __future__ import annotations
@@ -79,8 +84,10 @@ class Merger:
     async def _integrate_locked(self, task_id: str, attempt_id: str | None, candidate: str, ours: str,
                                 check: TreeCheck | None) -> IntegrationResult:
         g = self.git
-        if g.is_ancestor(candidate, ours):
-            return IntegrationResult("already_merged", commit=ours, detail="candidate already in integration branch")
+        done = g.find_commit_with_trailer(ours, "Multigenz-Candidate", candidate)
+        if done or g.is_ancestor(candidate, ours):
+            return IntegrationResult("already_merged", commit=ours,
+                                     detail="candidate already integrated" + (f" as {done}" if done else ""))
         mt = g.merge_tree(ours, candidate)
         if not mt.clean:
             return IntegrationResult("conflict", conflicts=mt.conflicts,
@@ -95,11 +102,13 @@ class Merger:
                 shutil.rmtree(tmp, ignore_errors=True)
             if not ok:
                 return IntegrationResult("rejected", detail=detail, reports=reports)
-        if g.is_ancestor(ours, candidate):
-            new = candidate  # pure fast-forward: the candidate already contains the integration head
-        else:
-            new = g.commit_tree(mt.tree, [ours, candidate], f"multigenz: integrate task {task_id}"
-                                + (f" (attempt {attempt_id})" if attempt_id else ""))
+        if mt.tree == g.tree_of(ours):
+            return IntegrationResult("already_merged", commit=ours, reports=reports,
+                                     detail="candidate introduces no change relative to the integration branch")
+        msg = (f"multigenz: integrate task {task_id}\n\n"
+               f"Multigenz-Run: {self.run_id}\nMultigenz-Task: {task_id}\n"
+               f"Multigenz-Attempt: {attempt_id or '-'}\nMultigenz-Candidate: {candidate}\n")
+        new = g.commit_tree(mt.tree, [ours], msg)
         g.ff_merge(self.wt.gitdir, self.wt.path, new)  # fast-forward only; fails if the branch moved
         return IntegrationResult("merged", commit=new, reports=reports)
 
@@ -113,9 +122,10 @@ class Merger:
         for row in self.store.list_integrations(self.run_id):
             if row["status"] != "merging":
                 continue
-            if self.git.is_ancestor(row["candidate_commit"], head):
-                self.store.update_integration(row["integration_id"], status="merged", result_commit=head,
-                                              detail="reconciled after restart: commit is in the integration branch")
+            landed = self.git.find_commit_with_trailer(head, "Multigenz-Candidate", row["candidate_commit"])
+            if landed or self.git.is_ancestor(row["candidate_commit"], head):
+                self.store.update_integration(row["integration_id"], status="merged", result_commit=landed or head,
+                                              detail="reconciled after restart: candidate is already in the integration branch")
                 out.append((row["integration_id"], "merged"))
             else:
                 self.store.update_integration(row["integration_id"], status="abandoned",

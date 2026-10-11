@@ -182,6 +182,7 @@ class ValidationCfg(_Strict):
     require_tests: bool = True
     require_policy_check: bool = True
     require_diff_review: bool = True
+    review_with_agent: bool = False  # additionally ask a 'review'-capable agent; it can only veto
     default_profile: str | None = None
     integration_profile: str | None = None
     profiles: dict[str, ValidationProfile] = Field(default_factory=dict)

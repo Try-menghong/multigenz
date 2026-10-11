@@ -122,3 +122,27 @@ def spawn_detached(home: Path, run_id: str, policy_path: Path | None = None) -> 
     proc = subprocess.Popen([sys.executable, "-m", "multigenz", "runs", "resume", run_id], stdout=log, stderr=log,
                             stdin=subprocess.DEVNULL, start_new_session=True, env=env)
     return proc.pid
+
+
+async def plan_only(policy: Policy, *, goal: str, repo: Path, home: Path, services: Services | None = None):
+    """Run the planner and validation without creating a run (nothing is persisted or executed)."""
+    import shutil
+    from multigenz.core.budget import Budget
+    from multigenz.core.planner import AgentPlanner
+    from multigenz.core.readonly import ReadOnlyRunner
+    from multigenz.execution.git import Git
+
+    svc = services or await build_services(policy)
+    git = Git(repo)
+    base = git.head()
+    scratch = home / "plan-scratch" / uuid_hex()
+    try:
+        runner = ReadOnlyRunner(svc, git, scratch, Budget(policy.orchestrator.run_budget_usd), run_id="planonly")
+        return await AgentPlanner(svc, runner).plan(goal, base, git.ls_tree(base))
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def uuid_hex() -> str:
+    import uuid
+    return uuid.uuid4().hex[:12]

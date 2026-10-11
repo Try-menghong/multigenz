@@ -23,18 +23,22 @@ from multigenz.contracts.task import TaskSpec, TaskStatus
 from multigenz.core import scheduler as sched
 from multigenz.core.backoff import backoff_delay
 from multigenz.core.bootstrap import Services
+from multigenz.core.budget import Budget
 from multigenz.core.locks import RunLock
+from multigenz.core.planner import AgentPlanner
+from multigenz.core.readonly import ReadOnlyRunner
 from multigenz.core.recovery import Reconciler
 from multigenz.core.report import write_report
-from multigenz.core.runs import RunPaths
+from multigenz.core.runs import RunPaths, register_plan
 from multigenz.core.state_machine import StateMachine
-from multigenz.errors import InvalidTransition, LeaseError, WorktreeError
+from multigenz.errors import InvalidTransition, LeaseError, PlanValidationError, WorktreeError
 from multigenz.execution.git import Git
 from multigenz.execution.manager import AttemptExecutor, AttemptOutcome, make_context, new_attempt_id
 from multigenz.execution.subprocess import ProcessStart
 from multigenz.execution.worktree import Worktree, WorktreeManager, task_branch
 from multigenz.integration.merger import Merger
 from multigenz.integration.pipeline import IntegrationPipeline
+from multigenz.integration.reviewer import AgentReviewer
 from multigenz.storage.sqlite import Store, now_iso
 
 S = TaskStatus
@@ -69,8 +73,12 @@ class Orchestrator:
         if self.integration_wt is None:
             raise WorktreeError("integration worktree is missing; cannot continue this run")
         self.merger = Merger(self.git, store, run_id, self.integration_wt, self.paths.scratch)
+        self.budget = Budget(self.policy.orchestrator.run_budget_usd, store, run_id)
+        self.readonly = ReadOnlyRunner(svc, self.git, self.paths.run_dir / "readonly", self.budget, run_id=run_id)
         make = pipeline_factory or IntegrationPipeline
-        self.pipeline = make(self.git, self.policy, svc.redactor, self.merger, runner=svc.runner, paths=self.paths)
+        self.pipeline = make(self.git, self.policy, svc.redactor, self.merger, runner=svc.runner, paths=self.paths,
+                             agent_reviewer=AgentReviewer(svc, self.readonly, self.git, svc.redactor))
+        self._plan_cancel = CancellationToken()
         self.executor = AttemptExecutor(self.git, svc.redactor)
         self.tokens: dict[str, CancellationToken] = {}
         self.running: dict[asyncio.Task, str] = {}
@@ -83,11 +91,13 @@ class Orchestrator:
     def request_interrupt(self) -> None:
         if self.stop is None:
             self.stop = "interrupt"
+        self._plan_cancel.cancel("interrupt")
         for t in self.tokens.values():
             t.cancel("interrupt")
 
     def request_cancel(self) -> None:
         self.stop = "cancel"
+        self._plan_cancel.cancel("cancel")
         for t in self.tokens.values():
             t.cancel("cancel")
 
@@ -110,8 +120,13 @@ class Orchestrator:
         assert run is not None
         if run["status"] in ("succeeded", "failed", "cancelled", "plan_rejected"):
             return RunOutcome(rid, run["status"], run["final_commit"])
+        if run["status"] in ("created", "planning"):
+            out = await self._plan_phase()
+            if out is not None:
+                return out
+            run = st.get_run(rid)
         if run["status"] != "running":
-            raise InvalidTransition(f"run is {run['status']}; planning phase must complete first")
+            raise InvalidTransition(f"run is {run['status']}; cannot execute")
         kill = None
         if hasattr(self.svc.backend, "runtime"):
             kill = self._container_kill
@@ -122,6 +137,40 @@ class Orchestrator:
         if st.get_run(rid)["cancel_requested"]:
             self.stop = "cancel"
         return await self._loop()
+
+    # ------------------------------------------------------------------ planning
+    async def _plan_phase(self) -> RunOutcome | None:
+        """Ask a planner agent for a plan and validate it *before anything executes* (resumable)."""
+        st, rid = self.store, self.run_id
+        run = st.get_run(rid)
+        if run["cancel_requested"]:
+            self.request_cancel()
+        if run["status"] == "created":
+            self.sm.run(rid, "planning", reason="awaiting planner")
+        planner = AgentPlanner(self.svc, self.readonly, cancel=self._plan_cancel,
+                               emit=lambda kind, payload: st.emit(rid, kind, payload=payload))
+        try:
+            plan = await planner.plan(run["objective"], run["base_commit"], self.git.ls_tree(run["base_commit"]))
+        except PlanValidationError as exc:
+            if self.stop == "interrupt":
+                return RunOutcome(rid, "interrupted")
+            if self.stop == "cancel":
+                self.sm.run(rid, "cancelled", reason="cancelled during planning")
+                write_report(st, rid, self.paths)
+                return RunOutcome(rid, "cancelled")
+            st.emit(rid, "plan.failed", payload={"issues": exc.issues})
+            self.sm.run(rid, "plan_rejected", reason="; ".join(exc.issues)[:500])
+            write_report(st, rid, self.paths)
+            return RunOutcome(rid, "plan_rejected")
+        if self.stop == "interrupt":
+            return RunOutcome(rid, "interrupted")
+        if self.stop == "cancel":
+            self.sm.run(rid, "cancelled", reason="cancelled during planning")
+            write_report(st, rid, self.paths)
+            return RunOutcome(rid, "cancelled")
+        register_plan(st, rid, plan)
+        self.sm.run(rid, "running", reason=f"plan validated ({len(plan.tasks)} tasks)")
+        return None
 
     def _container_kill(self, identity: str) -> None:
         import subprocess

@@ -94,12 +94,15 @@ class LiteLLMAdapter(AgentAdapter):
                 self._get_completion()(model=self.cfg.model, messages=[{"role": "user", "content": prompt}]),
                 timeout=max(1.0, context.remaining_seconds))
             text = resp["choices"][0]["message"]["content"] or ""
-            try:
-                import litellm
+            if isinstance(resp, dict) and resp.get("_multigenz_cost") is not None:
+                cost = float(resp["_multigenz_cost"])
+            else:
+                try:
+                    import litellm
 
-                cost = float(litellm.completion_cost(completion_response=resp))
-            except Exception:  # noqa: BLE001
-                cost = (resp.get("_multigenz_cost") if isinstance(resp, dict) else None)
+                    cost = float(litellm.completion_cost(completion_response=resp))
+                except Exception:  # noqa: BLE001 - unmeasurable stays unknown
+                    cost = None
         except TimeoutError:
             code = "timeout"
         except Exception as exc:  # noqa: BLE001

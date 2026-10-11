@@ -156,8 +156,6 @@ def run(
 
     pol = _load(policy)
     plan = _read_plan(plan_file)
-    if plan is None:
-        raise _fail("no --plan-file given and the planner is not available in this build", 2)
     home = default_state_home()
     try:
         run_id, outcome = asyncio.run(start_run(
@@ -170,6 +168,36 @@ def run(
         typer.echo(run_id if json_out else f"run {run_id} started in background (worker pid {pid})")
         return
     _print_outcome(home, run_id, outcome, json_out)
+
+
+@app.command()
+def plan(
+    goal: Annotated[str, typer.Argument(help="Development objective.")],
+    repo: Annotated[Path, typer.Option("--repo")] = Path("."),
+    out: Annotated[Optional[Path], typer.Option("--out", help="Write the validated plan JSON here.")] = None,
+    policy: PolicyOpt = None,
+    json_out: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Ask a planner agent for a task DAG and validate it. Nothing is executed or persisted."""
+    from multigenz.core.driver import plan_only
+
+    pol = _load(policy)
+    try:
+        doc = asyncio.run(plan_only(pol, goal=goal, repo=repo, home=default_state_home()))
+    except MultiGenzError as exc:
+        issues = getattr(exc, "issues", None)
+        typer.secho("plan rejected:" if issues else f"error: {exc}", fg=typer.colors.RED, err=True)
+        for i in issues or []:
+            typer.secho(f"  - {i}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1) from exc
+    if out:
+        out.write_text(doc.model_dump_json(indent=2))
+    if json_out:
+        typer.echo(doc.model_dump_json(indent=2))
+        return
+    typer.echo(f"plan accepted: {len(doc.tasks)} tasks. {doc.summary}")
+    for t in doc.tasks:
+        typer.echo(f"  - {t.task_id:<16} deps={t.dependencies or '-'} paths={t.allowed_paths} caps={sorted(t.required_capabilities)}")
 
 
 def _print_outcome(home: Path, run_id: str, outcome, json_out: bool) -> None:
@@ -194,6 +222,8 @@ def _print_report(rep: dict) -> None:
     typer.echo(typer.style(f"run {rep['run_id']}: {rep['status'].upper()}", fg=color, bold=True))
     typer.echo(f"  objective: {rep['objective']}")
     typer.echo(f"  integration branch: {rep['integration_branch']}  final commit: {rep['final_integration_commit'] or '-'}")
+    for issue in (rep["planning"]["failure"] or {}).get("issues", []):
+        typer.secho(f"  plan rejected: {issue}", fg=typer.colors.RED)
     for t in rep["tasks"]:
         v = t.get("last_validation") or {}
         typer.echo(f"  - {t['task_id']:<18} {t['status']:<10} attempts={t['attempts']} provider={t['provider'] or '-'}"

@@ -52,8 +52,8 @@ def main():
     if plans is None:
         att = sc.get("attempts", {})
         plans = att.get(str(n), att.get("default", []))
-    if isinstance(plans, dict):  # per-agent override
-        plans = plans.get(agent, plans.get("default", []))
+    if isinstance(plans, dict):  # keyed by attempt number, agent name, or "default"
+        plans = plans.get(str(n), plans.get(agent, plans.get("default", [])))
     for act in plans:
         if act.get("only_agent") and act["only_agent"] != agent:
             continue
