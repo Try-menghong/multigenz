@@ -1,0 +1,134 @@
+#!/usr/bin/python3
+"""Scripted stand-in for a coding agent CLI (TEST SUPPORT ONLY - not an LLM).
+
+Reads the task file written by the orchestrator, looks up a scenario JSON and performs the
+listed actions (write files, print, sleep, spawn background processes, probe the sandbox ...).
+It is invoked exactly like a real CLI agent: through the adapter, inside the sandbox.
+"""
+import json
+import os
+import subprocess
+import sys
+import time
+
+
+def usage():
+    print("scripted-agent: deterministic test agent\n"
+          "  --task-file FILE   task description from the orchestrator\n"
+          "  --prompt-file FILE rendered prompt\n"
+          "  --scenario DIR     scenario directory\n"
+          "  --agent-name NAME  logical agent name\n"
+          "  --non-interactive  never prompt")
+
+
+def arg(name, default=None):
+    if name in sys.argv:
+        return sys.argv[sys.argv.index(name) + 1]
+    return default
+
+
+def main():
+    if "--help" in sys.argv:
+        usage()
+        return 0
+    if "--version" in sys.argv:
+        print("scripted-agent 1.0")
+        return 0
+    task = json.load(open(arg("--task-file")))
+    prompt = open(arg("--prompt-file")).read()
+    scenario_dir = arg("--scenario")
+    agent = arg("--agent-name", "agent")
+    tid = task["task"]["task_id"]
+    n = task.get("attempt_number", 1)
+    mode = task.get("mode", "code")
+    print(f"AGENT-RUN agent={agent} task={tid} attempt={n} mode={mode} pid={os.getpid()}", flush=True)
+    sc = {}
+    for cand in (f"{tid}.json", "default.json"):
+        p = os.path.join(scenario_dir, cand)
+        if os.path.exists(p):
+            sc = json.load(open(p))
+            break
+    plans = sc.get("modes", {}).get(mode)
+    if plans is None:
+        att = sc.get("attempts", {})
+        plans = att.get(str(n), att.get("default", []))
+    if isinstance(plans, dict):  # per-agent override
+        plans = plans.get(agent, plans.get("default", []))
+    for act in plans:
+        if act.get("only_agent") and act["only_agent"] != agent:
+            continue
+        if act.get("skip_agent") == agent:
+            continue
+        run(act, prompt, scenario_dir)
+    return 0
+
+
+def run(act, prompt, scenario_dir):
+    for path, content in act.get("write", {}).items():
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        open(path, "w").write(content)
+    for path, content in act.get("append", {}).items():
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        open(path, "a").write(content)
+    for path, src in act.get("copy_from", {}).items():
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        open(path, "wb").write(open(os.path.join(scenario_dir, "files", src), "rb").read())
+    for path in act.get("delete", []):
+        os.remove(path)
+    for src, dst in act.get("symlink", {}).items():
+        os.symlink(dst, src)
+    for line in act.get("print", []):
+        print(line, flush=True)
+    for line in act.get("stderr", []):
+        print(line, file=sys.stderr, flush=True)
+    if act.get("echo_prompt_contains"):
+        for needle in act["echo_prompt_contains"]:
+            print(f"PROMPT-HAS[{needle}]={needle in prompt}", flush=True)
+    if act.get("feedback_to_stdout") and "Validation feedback" in prompt:
+        print("SAW-FEEDBACK", flush=True)
+    for target in act.get("read_files", []):
+        try:
+            data = open(target).read(200)
+            print(f"READ-OK {target}: {data!r}", flush=True)
+        except Exception as e:  # noqa: BLE001
+            print(f"READ-FAIL {target}: {type(e).__name__}", flush=True)
+    for target in act.get("write_files", []):
+        try:
+            open(target, "w").write("pwned")
+            print(f"WRITE-OK {target}", flush=True)
+        except Exception as e:  # noqa: BLE001
+            print(f"WRITE-FAIL {target}: {type(e).__name__}", flush=True)
+    if act.get("dump_env"):
+        for k, v in sorted(os.environ.items()):
+            print(f"ENV {k}={v}", flush=True)
+    if act.get("dump_status"):
+        for line in open("/proc/self/status"):
+            if line.startswith(("CapEff", "CapBnd", "NoNewPrivs")):
+                print("STATUS " + line.strip(), flush=True)
+    if act.get("net_probe"):
+        import socket
+        try:
+            socket.create_connection(("1.1.1.1", 53), timeout=2)
+            print("NET-OK", flush=True)
+        except Exception as e:  # noqa: BLE001
+            print(f"NET-FAIL {type(e).__name__}", flush=True)
+    if act.get("spawn_background"):
+        p = subprocess.Popen(act["spawn_background"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        print(f"BACKGROUND-PID {p.pid}", flush=True)
+        if act.get("background_pid_file"):
+            open(act["background_pid_file"], "w").write(str(p.pid))
+    if act.get("marker_file"):  # host-visible marker (only meaningful when not sandboxed)
+        with open(act["marker_file"], "a") as fh:
+            fh.write(f"{os.getpid()}\n")
+    if act.get("emit_json") is not None:
+        print(json.dumps(act["emit_json"]), flush=True)
+    if act.get("emit_text"):
+        print(act["emit_text"], flush=True)
+    if act.get("sleep"):
+        time.sleep(act["sleep"])
+    if "exit" in act:
+        sys.exit(act["exit"])
+
+
+if __name__ == "__main__":
+    sys.exit(main())
