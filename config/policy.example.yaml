@@ -1,0 +1,39 @@
+version: 1
+orchestrator:
+  mode: autonomous
+  max_parallel_agents: 3
+  max_task_attempts: 2
+  task_timeout_seconds: 900
+  run_budget_usd: 5.00
+agents:
+  claude:
+    enabled: true
+    adapter: cli
+    command: claude
+    capabilities: [architecture, coding, review]
+  codex:
+    enabled: true
+    adapter: cli
+    command: codex
+    capabilities: [coding, testing, review]
+  antigravity:
+    enabled: true
+    adapter: cli
+    command: agy
+    capabilities: [research, architecture]
+  deepseek:
+    enabled: true
+    adapter: litellm
+    model: deepseek/deepseek-chat
+    capabilities: [analysis, review]
+execution:
+  isolation: rootless-container
+  network: restricted
+git:
+  auto_integrate: true
+  auto_push: false
+  protect_default_branch: true
+validation:
+  require_tests: true
+  require_policy_check: true
+  require_diff_review: true
