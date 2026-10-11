@@ -193,3 +193,33 @@ async def test_mounted_venv_gets_the_interpreter_prefix_named_in_pyvenv_cfg(tmp_
     w = UsernsBackend().wrap(req)
     res, tail = await ProcessManager().run(CommandSpec(argv=w.argv, cwd=w.cwd, env=w.env, timeout_seconds=30))
     assert res.exit_code == 0 and "STDLIB-HERE" in tail, tail
+
+
+@pytest.mark.skipif(not os.path.exists("/etc/resolv.conf"), reason="host has no /etc/resolv.conf")
+async def test_host_network_gets_host_resolver_config_but_isolated_network_does_not(tmp_path):
+    host = Path("/etc/resolv.conf").read_text()
+    for d in ("h", "n", "w"):
+        (tmp_path / d).mkdir()
+    res, out_host, _ = await sh(tmp_path / "h", "cat /etc/resolv.conf", network="host")
+    res, out_none, _ = await sh(tmp_path / "n", "cat /etc/resolv.conf", network="none")
+    assert out_host.strip() == host.strip() and out_none.strip() == ""
+    res, out, _ = await sh(tmp_path / "w", "echo x >> /etc/resolv.conf 2>&1", network="host")
+    assert "Read-only" in out  # still read-only inside the sandbox
+
+
+async def test_script_cli_finds_its_runtime_next_to_itself(tmp_path):
+    """`#!/usr/bin/env mini-node` with the runtime in the same non-/usr directory (nvm / /opt/<tool>/bin layout)."""
+    bindir = tmp_path / "opt" / "toolchain" / "bin"
+    bindir.mkdir(parents=True)
+    rt = bindir / "mini-node"
+    rt.write_text("#!/bin/sh\necho RUNTIME-OK \"$@\"\n")
+    rt.chmod(0o755)
+    cli = bindir / "agentcli"
+    cli.write_text("#!/usr/bin/env mini-node\n")
+    cli.chmod(0o755)
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    req = SandboxRequest(argv=[str(cli), "arg1"], env={}, workspace=ws, state_dir=tmp_path / "st", sandbox_id="t")
+    w = UsernsBackend().wrap(req)
+    res, tail = await ProcessManager().run(CommandSpec(argv=w.argv, cwd=w.cwd, env=w.env, timeout_seconds=30))
+    assert res.exit_code == 0 and any("RUNTIME-OK" in t for t in tail), tail

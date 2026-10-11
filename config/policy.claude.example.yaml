@@ -1,0 +1,36 @@
+# One real Claude Code agent (plans AND codes), built-in userns sandbox, conservative limits for a FIRST run.
+# Copy, then adjust the `validation` profile to the repository you point MultiGenz at.
+version: 1
+orchestrator:
+  mode: autonomous
+  max_parallel_agents: 1          # start serial; raise once you trust it
+  max_task_attempts: 2
+  task_timeout_seconds: 1200      # real agents are slower than the 900s default for non-trivial tasks
+  run_budget_usd: 5.00            # enforced only for measurable API spend; Claude CLI spend is reported as UNKNOWN
+agents:
+  claude:
+    enabled: true
+    adapter: cli
+    command: claude               # must be on PATH; its invocations are verified against `claude --help`
+    capabilities: [architecture, coding, testing, review]
+    credentials:
+      env: [ANTHROPIC_API_KEY]    # injected into THIS agent's sandbox only; redacted from every log/event/report
+execution:
+  isolation: userns
+  network: host                   # Claude must reach the API. UNRESTRICTED network for the agent (see docs/SECURITY.md)
+  readonly_paths: []              # extra host paths the agent's install needs (only if it lives outside /usr)
+git:
+  auto_integrate: true
+  auto_push: false
+  protect_default_branch: true
+validation:
+  require_tests: true
+  require_policy_check: true
+  require_diff_review: true
+  default_profile: unit
+  integration_profile: unit
+  profiles:
+    unit:                          # runs in a no-network sandbox on an exported copy of the tree under test
+      commands:
+        - argv: ["/usr/bin/python3", "-m", "unittest", "discover", "-s", "tests", "-q"]
+          timeout_seconds: 600

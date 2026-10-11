@@ -131,19 +131,28 @@ class UsernsBackend(SandboxBackend):
         rw = [[str(req.workspace), WORKSPACE]] + [[s, d] for s, d in req.rw_mounts]
         env = {"PATH": SANDBOX_PATH, "HOME": SANDBOX_HOME, "TMPDIR": "/tmp", "LANG": "C.UTF-8"}
         env.update(req.env)
+        etc_files = {
+            "passwd": f"root:x:0:0:agent:{SANDBOX_HOME}:/bin/sh\nnobody:x:65534:65534:nobody:/:/usr/sbin/nologin\n",
+            "group": "root:x:0:\nnogroup:x:65534:\n",
+            "hosts": "127.0.0.1 localhost\n",
+            "resolv.conf": "",
+            "hostname": "mg-sandbox\n",
+        }
+        etc_ro = list(ETC_RO)
+        if req.network == "host":
+            # An explicitly host-networked agent (hosted-model CLI) needs working name resolution: expose the
+            # host's resolver configuration read-only instead of the empty placeholder files.
+            for f in ("/etc/resolv.conf", "/etc/hosts", "/etc/nsswitch.conf"):
+                if os.path.exists(f):
+                    etc_ro.append(f)
+                    etc_files.pop(os.path.basename(f), None)
         return {
             "rootfs": str(req.state_dir / "rootfs"),
             "symlinks": symlinks,
             "ro_binds": ro,
             "rw_binds": rw,
-            "etc_files": {
-                "passwd": f"root:x:0:0:agent:{SANDBOX_HOME}:/bin/sh\nnobody:x:65534:65534:nobody:/:/usr/sbin/nologin\n",
-                "group": "root:x:0:\nnogroup:x:65534:\n",
-                "hosts": "127.0.0.1 localhost\n",
-                "resolv.conf": "",
-                "hostname": "mg-sandbox\n",
-            },
-            "etc_ro": ETC_RO,
+            "etc_files": etc_files,
+            "etc_ro": etc_ro,
             "tmpfs": [["/tmp", req.limits.tmp_mb], [SANDBOX_HOME, req.limits.tmp_mb]],
             "cwd": req.cwd or WORKSPACE,
             "env": env,
@@ -181,6 +190,21 @@ class UsernsBackend(SandboxBackend):
                 seen.add(hop)
                 tgt = os.readlink(hop)
                 hop = tgt if os.path.isabs(tgt) else os.path.normpath(os.path.join(os.path.dirname(hop), tgt))
+        # Script-style CLIs (`#!/usr/bin/env node`) find their runtime next to themselves (nvm, /opt/<tool>/bin):
+        # make the command's own directories (outside /usr) part of the sandbox PATH.
+        if os.path.isabs(exe) and "PATH" not in req.env:
+            extra, hop, seen = [], exe, set()
+            while True:
+                d = os.path.dirname(hop)
+                if not d.startswith("/usr/") and d not in extra:
+                    extra.append(d)
+                if not os.path.islink(hop) or hop in seen:
+                    break
+                seen.add(hop)
+                tgt = os.readlink(hop)
+                hop = tgt if os.path.isabs(tgt) else os.path.normpath(os.path.join(os.path.dirname(hop), tgt))
+            if extra:
+                spec["env"]["PATH"] = ":".join([*extra, spec["env"]["PATH"]])
         spec_path = req.state_dir / "nsboot.json"
         fd = os.open(spec_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as fh:

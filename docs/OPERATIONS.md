@@ -67,3 +67,17 @@ snapshots stay on their own branches. Review or merge `integration` yourself —
 kernel start time), snapshots any interrupted work in Git, settles half-finished merges by asking Git, resumes tasks that were
 mid-validation at validation, and only then schedules new attempts. `multigenz runs audit <id>` replays the event log and
 checks sequence, hash chain, transition legality and equality with the stored state.
+
+## Running with real Claude Code
+1. Install and verify the CLI: `claude --version`. Authentication: use an API key (`ANTHROPIC_API_KEY`); it is injected only
+   into the sandbox of the agent that lists it under `credentials.env`. (Interactive OAuth login files can be granted with
+   `credentials.files`, but they are mounted read-only, so token refresh inside the sandbox will not work.)
+2. Start from `config/policy.claude.example.yaml`. `network: host` is required for the agent to reach the API (name
+   resolution is provided read-only from the host); it means the agent has unrestricted network access.
+3. Point `validation.profiles` at your repository's real test command. The repository needs at least one test already
+   (a pytest/unittest run that collects nothing fails). Use a throwaway repository first.
+4. `multigenz doctor --policy P` → `multigenz agents list --policy P` (shows which Claude invocations were verified) →
+   `multigenz plan "<goal>" --repo R --policy P` → `multigenz run "<goal>" --repo R --policy P`; watch with `multigenz tui`.
+Claude runs unattended with `--permission-mode acceptEdits`: it can edit files in its worktree but not run shell commands,
+so it cannot run tests itself — the orchestrator runs the profile and feeds failures back. This path has not been exercised
+against the live service in this repository's tests.
