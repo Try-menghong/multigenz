@@ -41,7 +41,9 @@ class Store:
         self.con.execute("PRAGMA synchronous=FULL")
         self.con.execute("PRAGMA foreign_keys=ON")
         self.con.execute("PRAGMA busy_timeout=30000")
-        if not readonly:
+        # "readonly" stores never alter an initialised schema, but an empty database (first launch of the
+        # TUI/CLI) still needs it created.
+        if not readonly or self.con.execute("PRAGMA user_version").fetchone()[0] == 0:
             migrate(self.con)
 
     def close(self) -> None:

@@ -16,6 +16,13 @@ agents:
     adapter: cli
     command: codex
     capabilities: [coding, testing, review]
+    # No flags are ever assumed. Until you define a non-interactive invocation that is verified against the
+    # binary's own help output, this adapter stays disabled (see `multigenz agents list`):
+    # invocations:
+    #   - name: exec
+    #     argv: ["{command}", "<flags from `codex --help`>"]
+    #     stdin: prompt
+    #     requires_help_tokens: ["<every flag/subcommand used above>"]
   antigravity:
     enabled: true
     adapter: cli
@@ -29,6 +36,9 @@ agents:
 execution:
   isolation: rootless-container
   network: restricted
+  # Required by `rootless-container`; `restricted` also needs an administrator-defined egress-limited network:
+  # container_image: registry.example/multigenz-agent:1
+  # container_network: multigenz-egress
 git:
   auto_integrate: true
   auto_push: false
@@ -37,3 +47,14 @@ validation:
   require_tests: true
   require_policy_check: true
   require_diff_review: true
+  # Administrator-defined test profiles. These fixed argv lists are the ONLY commands the orchestrator ever runs to
+  # verify results; acceptance_commands suggested by a planner are never executed. Without a profile and with
+  # require_tests: true, no agent result can be accepted.
+  # default_profile: pytest
+  # integration_profile: pytest
+  # profiles:
+  #   pytest:
+  #     commands:
+  #       - argv: ["/usr/bin/python3", "-m", "pytest", "-q", "-p", "no:cacheprovider"]
+  #         timeout_seconds: 600
+  #     readonly_paths: []      # extra host paths (e.g. a virtualenv) mounted read-only for the test run

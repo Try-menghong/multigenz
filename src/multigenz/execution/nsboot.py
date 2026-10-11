@@ -13,6 +13,7 @@ usage: nsboot.py <spec.json> -- <command> [args...]
 from __future__ import annotations
 
 import ctypes
+import errno
 import fcntl
 import json
 import os
@@ -81,6 +82,27 @@ def bind(root: str, src: str, dst: str, ro: bool) -> None:
     mount(src, target, None, MS_BIND)
     if ro:
         mount(None, target, None, MS_BIND | MS_REMOUNT | MS_RDONLY | inherited_flags(target))
+
+
+def harden_proc(proc: str) -> None:
+    """Like container runtimes: global sysctls read-only, sensitive kernel interfaces masked.
+
+    Without this, an orchestrator running as host root could let a sandboxed process (uid 0 in its user
+    namespace, same kuid as host root) pass the DAC check for *global* sysctls such as vm.swappiness.
+    """
+    for sub in ("sys", "sysrq-trigger", "irq", "bus", "fs"):
+        path = os.path.join(proc, sub)
+        if os.path.exists(path):
+            mount(path, path, None, MS_BIND)
+            mount(None, path, None, MS_BIND | MS_REMOUNT | MS_RDONLY | inherited_flags(path))
+    for sub in ("kcore", "keys", "timer_list", "sched_debug", "scsi"):
+        path = os.path.join(proc, sub)
+        if not os.path.exists(path):
+            continue
+        if os.path.isdir(path):
+            mount("tmpfs", path, "tmpfs", MS_RDONLY | MS_NOSUID | MS_NODEV | MS_NOEXEC, "size=0")
+        else:
+            mount("/dev/null", path, None, MS_BIND)
 
 
 def drop_privileges() -> None:
@@ -164,6 +186,7 @@ def main() -> None:
 
     os.makedirs(os.path.join(root, "proc"), exist_ok=True)
     mount("proc", os.path.join(root, "proc"), "proc", MS_NOSUID | MS_NODEV | MS_NOEXEC)
+    harden_proc(os.path.join(root, "proc"))
 
     for src, dst in sorted(spec.get("rw_binds", []), key=lambda p: p[1].count("/")):
         if not os.path.exists(src):
@@ -201,7 +224,11 @@ def main() -> None:
     try:
         os.execvpe(cmd[0], cmd, env)
     except OSError as exc:
-        die(f"exec {cmd[0]!r} failed: {exc}")
+        # The sandbox itself is fine; the *command* could not be started. Distinct exit codes let the
+        # orchestrator tell a missing/unusable agent binary (provider problem) from a broken sandbox (126).
+        sys.stderr.write(f"multigenz-sandbox-exec: cannot execute {cmd[0]!r}: {exc}\n")
+        sys.stderr.flush()
+        os._exit(127 if exc.errno == errno.ENOENT else 125)
 
 
 if __name__ == "__main__":

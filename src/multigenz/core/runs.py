@@ -56,7 +56,22 @@ def db_path(home: Path) -> Path:
     return home / "multigenz.db"
 
 
+def private_dir(path: Path) -> Path:
+    """Create (and tighten) a state directory so only the owner can read logs, worktrees and the database."""
+    chain = [path]
+    while chain[-1].parent != chain[-1] and not chain[-1].parent.exists():
+        chain.append(chain[-1].parent)
+    for d in reversed(chain):  # every directory *we* create along the way is private, not only the leaf
+        d.mkdir(exist_ok=True, mode=0o700)
+        try:
+            d.chmod(0o700)
+        except OSError:
+            pass
+    return path
+
+
 def open_store(home: Path, redactor: Redactor | None = None, *, readonly: bool = False) -> Store:
+    private_dir(home)
     return Store(db_path(home), redactor, readonly=readonly)
 
 
@@ -101,7 +116,7 @@ async def create_run(store: Store, svc: Services, *, objective: str, repo: Path,
         "original_tree_dirty": dirty,
         "note": ("uncommitted changes in the original working tree are NOT part of the run base"
                  if dirty else "")})
-    paths.run_dir.mkdir(parents=True, exist_ok=True)
+    private_dir(paths.run_dir)
     wts = WorktreeManager(git, paths.worktrees)
     wts.create("integration", integration_branch(run_id), base)
     if plan is not None:

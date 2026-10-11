@@ -1,4 +1,5 @@
-"""Worktree lifecycle: unique, namespaced, never overwritten, never force-removed."""
+"""Worktree lifecycle: unique, namespaced, never overwritten. Worktrees are never removed by MultiGenz
+(failed attempts and diagnostics are preserved; garbage collection would need an explicit retention policy)."""
 
 from __future__ import annotations
 
@@ -71,12 +72,3 @@ class WorktreeManager:
         except GitError:
             return None
         return Worktree(name=name, path=path, branch=branch, gitdir=gitdir, base_commit=base_commit)
-
-    def remove_if_clean(self, wt: Worktree) -> bool:
-        """Explicit-retention GC only: non-forced removal; refuses dirty or unmerged work."""
-        dirty = self.git.run("status", "--porcelain", "--untracked-files=all", git_dir=wt.gitdir,
-                             work_tree=wt.path).stdout.strip()
-        if dirty:
-            return False
-        r = self.git.run("worktree", "remove", str(wt.path), check=False)  # no --force, ever
-        return r.returncode == 0

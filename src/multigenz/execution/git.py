@@ -27,6 +27,30 @@ HARDEN = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", 
           "-c", "protocol.ext.allow=never", "-c", "core.autocrlf=false"]
 NULL_SHA = "0" * 40
 
+# Defence in depth for AGENTS.md "Engineering constraints": the orchestrator never pushes, resets, cleans,
+# rewrites history, deletes branches or forces anything. The wrapper refuses these even if a future code path
+# tried; they are not merely "unused".
+DENIED_SUBCOMMANDS = frozenset({
+    "push", "reset", "clean", "rebase", "filter-branch", "filter-repo", "pull", "fetch", "remote", "gc", "prune",
+    "reflog", "replace", "stash", "checkout", "switch", "restore", "revert", "cherry-pick", "am", "send-email",
+    "submodule", "config", "tag", "notes", "bisect"})
+DENIED_FLAGS = frozenset({"--force", "-f", "--hard", "--force-with-lease", "-D", "--delete", "-d", "--mirror",
+                          "--prune"})
+
+
+def guard(args: tuple[str, ...]) -> None:
+    from multigenz.errors import PolicyViolation
+
+    positional = [a for a in args if not a.startswith("-")]
+    sub = positional[0] if positional else ""
+    if sub == "worktree" and (len(positional) < 2 or positional[1] not in ("add", "list")):
+        raise PolicyViolation("only 'git worktree add' and 'git worktree list' are permitted")
+    if sub in DENIED_SUBCOMMANDS:
+        raise PolicyViolation(f"git {sub!r} is not permitted for the orchestrator")
+    bad = [a for a in args if a in DENIED_FLAGS]
+    if bad:
+        raise PolicyViolation(f"git flag(s) {bad} are not permitted for the orchestrator")
+
 
 @dataclass(frozen=True)
 class RawChange:
@@ -65,6 +89,7 @@ class Git:
     def run(self, *args: str, check: bool = True, input: bytes | str | None = None,
             git_dir: Path | None = None, work_tree: Path | None = None, cwd: Path | None = None,
             env: dict[str, str] | None = None, text: bool = True, timeout: float = 120.0):
+        guard(args)
         cmd = [self.git_bin, *HARDEN]
         if git_dir is not None:
             cmd += ["--git-dir", str(git_dir)]

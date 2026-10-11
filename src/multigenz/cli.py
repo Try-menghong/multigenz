@@ -339,6 +339,37 @@ def runs_resume(run_id: str, json_out: Annotated[bool, typer.Option("--json")] =
     _print_outcome(home, rid, outcome, json_out)
 
 
+@app.command()
+def tui(policy: PolicyOpt = None) -> None:
+    """Interactive dashboard: run history, live task states, redacted logs, cancel, doctor."""
+    from multigenz.tui.app import MultiGenzApp
+
+    pol, err = None, None
+    try:
+        pol = load_policy(policy)
+    except MultiGenzError as exc:
+        err = str(exc)
+    MultiGenzApp(default_state_home(), policy=pol, policy_error=err).run()
+
+
+@runs_app.command("logs")
+def runs_logs(run_id: str, task: Annotated[str, typer.Argument(help="Task id.")]) -> None:
+    """Show the (redacted) stdout/stderr logs of every attempt of a task."""
+    from multigenz.core.redaction import Redactor
+    from multigenz.core.runs import open_store
+    from multigenz.tui.data import attempt_logs
+
+    store = open_store(default_state_home(), readonly=True)
+    rid = _resolve(store, run_id)
+    blocks = attempt_logs(store, rid, task, Redactor.from_environ(__import__("os").environ))
+    store.close()
+    if not blocks:
+        raise _fail(f"no logs for task {task!r} in run {rid}")
+    for header, text in blocks:
+        typer.echo(f"=== {header}")
+        typer.echo(text)
+
+
 def main() -> None:
     app()
 

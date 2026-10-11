@@ -139,3 +139,20 @@ def max_concurrency(attempts: list[dict]) -> int:
         cur += d
         best = max(best, cur)
     return best
+
+
+def sleeping_procs(duration: str) -> list[int]:
+    """Live (non-zombie) processes whose argv really is `sleep <duration>` - not substring matches of shell command lines."""
+    out = []
+    for d in os.listdir("/proc"):
+        if not d.isdigit():
+            continue
+        try:
+            argv = open(f"/proc/{d}/cmdline", "rb").read().split(b"\0")
+            state = open(f"/proc/{d}/stat").read().split()[2]
+        except OSError:
+            continue
+        if len(argv) >= 2 and os.path.basename(argv[0].decode(errors="replace")) == "sleep" \
+                and argv[1].decode(errors="replace") == duration and state != "Z":
+            out.append(int(d))
+    return out

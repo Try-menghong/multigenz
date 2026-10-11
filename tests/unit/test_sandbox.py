@@ -130,3 +130,24 @@ def test_container_restricted_requires_admin_network(tmp_path):
     with pytest.raises(IsolationUnavailableError):
         b.build_argv(SandboxRequest(argv=["a"], env={}, workspace=tmp_path, state_dir=tmp_path, sandbox_id="x",
                                     network="restricted"), runtime="podman", env_file=None)
+
+
+async def test_exec_failure_inside_working_sandbox_is_not_a_sandbox_failure(tmp_path):
+    from multigenz.adapters.base import classify_failure
+    for exe, code, want in (("/nonexistent/agent", 127, "binary_missing"), ("/etc/passwd", 125, "spawn_failed")):
+        ws = tmp_path / "ws"
+        ws.mkdir(exist_ok=True)
+        req = SandboxRequest(argv=[exe], env={}, workspace=ws, state_dir=tmp_path / "st", sandbox_id="t")
+        w = UsernsBackend().wrap(req)
+        res, tail = await ProcessManager().run(CommandSpec(argv=w.argv, cwd=w.cwd, env=w.env, timeout_seconds=30))
+        assert res.exit_code == code
+        assert classify_failure(exit_code=res.exit_code, timed_out=False, cancelled=False, spawn_error=None,
+                                term_signal=None, tail=tail) == want
+
+
+async def test_proc_sys_is_read_only_and_kernel_interfaces_masked(tmp_path):
+    res, out, _ = await sh(tmp_path, "echo x > /proc/sys/kernel/hostname 2>&1; echo x > /proc/sys/vm/swappiness 2>&1; "
+                                     "head -c 10 /proc/kcore 2>/dev/null | wc -c; cat /proc/keys 2>/dev/null | wc -c")
+    lines = out.splitlines()
+    assert sum("Read-only file system" in l for l in lines) == 2
+    assert lines[-2:] == ["0", "0"]  # masked with /dev/null

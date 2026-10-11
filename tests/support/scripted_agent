@@ -98,6 +98,11 @@ def run(act, prompt, scenario_dir):
             print(f"WRITE-OK {target}", flush=True)
         except Exception as e:  # noqa: BLE001
             print(f"WRITE-FAIL {target}: {type(e).__name__}", flush=True)
+    for target in act.get("listdir", []):
+        try:
+            print(f"LS {target}: {sorted(os.listdir(target))}", flush=True)
+        except Exception as e:  # noqa: BLE001
+            print(f"LS-FAIL {target}: {type(e).__name__}", flush=True)
     if act.get("dump_env"):
         for k, v in sorted(os.environ.items()):
             print(f"ENV {k}={v}", flush=True)

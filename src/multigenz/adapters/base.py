@@ -93,6 +93,8 @@ def classify_failure(*, exit_code: int | None, timed_out: bool, cancelled: bool,
     text = "\n".join(tail[-60:]).lower()
     if exit_code == 126 and "multigenz-sandbox:" in text:
         return "sandbox_failure"
+    if exit_code in (125, 127) and "multigenz-sandbox-exec:" in text:
+        return "binary_missing" if exit_code == 127 else "spawn_failed"
     if term_signal is not None:
         return "killed"
     if exit_code == 0:

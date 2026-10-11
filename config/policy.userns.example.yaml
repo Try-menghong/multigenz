@@ -1,0 +1,41 @@
+# For Linux hosts WITHOUT a rootless container runtime. Uses MultiGenz's built-in unprivileged-namespace sandbox:
+# user/mount/pid/ipc/uts/net namespaces, tmpfs root, read-only system binds, one writable workspace,
+# all capabilities dropped, no_new_privs, rlimits. See docs/SECURITY.md for what this does and does not provide.
+version: 1
+orchestrator:
+  mode: autonomous
+  max_parallel_agents: 3
+  max_task_attempts: 2
+  task_timeout_seconds: 900
+  run_budget_usd: 5.00
+agents:
+  claude:
+    enabled: true
+    adapter: cli
+    command: claude
+    capabilities: [architecture, coding, review]
+    # The agent needs its own provider credential. Grant ONLY that variable, to ONLY this agent:
+    # credentials:
+    #   env: [ANTHROPIC_API_KEY]
+execution:
+  isolation: userns
+  # `none` = no network at all (tests, offline agents). A hosted-model CLI needs the network: `host` is an explicit,
+  # unrestricted opt-in with the userns backend. For restricted egress use the container backend instead.
+  network: none
+  # Extra host paths made visible read-only inside the sandbox (e.g. the agent CLI's install tree):
+  readonly_paths: []
+git:
+  auto_integrate: true
+  auto_push: false
+  protect_default_branch: true
+validation:
+  require_tests: true
+  require_policy_check: true
+  require_diff_review: true
+  default_profile: unit
+  integration_profile: unit
+  profiles:
+    unit:
+      commands:
+        - argv: ["/usr/bin/python3", "-m", "unittest", "discover", "-s", "tests", "-q"]
+          timeout_seconds: 600
