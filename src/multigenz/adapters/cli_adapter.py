@@ -175,7 +175,14 @@ class CliAdapter(AgentAdapter):
                                                  else "adapter_disabled")
             yield ev("error", probe.reason)
             return
-        inv = self.invocation_for(context.mode)
+        try:
+            inv = self.invocation_for(context.mode)
+        except AdapterUnavailable as exc:
+            self._results[attempt] = AgentResult(task_id=task.task_id, attempt_id=attempt, exit_code=None,
+                                                 commit_sha=None, artifacts=[], success=False,
+                                                 error_code="adapter_disabled")
+            yield ev("error", str(exc))
+            return
         if inv.unattended and not self.runner.sandboxed:
             self._results[attempt] = AgentResult(task_id=task.task_id, attempt_id=attempt, exit_code=None,
                                                  commit_sha=None, artifacts=[], success=False,

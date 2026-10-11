@@ -204,7 +204,7 @@ class Git:
 
     # -- inspection -------------------------------------------------------------------
     def diff_raw(self, base: str, head: str) -> list[RawChange]:
-        out = self.run("diff", "--raw", "-z", "--no-renames", "--no-ext-diff", "--no-textconv",
+        out = self.run("diff", "--raw", "-z", "--no-abbrev", "--no-renames", "--no-ext-diff", "--no-textconv",
                        "--no-color", base, head).stdout
         parts = out.split("\0")
         changes: list[RawChange] = []

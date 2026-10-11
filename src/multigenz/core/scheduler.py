@@ -31,12 +31,17 @@ class TaskView:
     excluded: frozenset[str]
     not_before: float | None
     provider: str | None = None
+    kind: str = "code"  # "conflict" while a merge-conflict resolution attempt is pending
+
+    @property
+    def mode(self) -> str:
+        return "conflict" if self.kind == "conflict" else "code"
 
     @classmethod
     def from_row(cls, row: dict) -> "TaskView":
         return cls(task_id=row["task_id"], spec=TaskSpec.model_validate_json(row["spec"]),
                    status=TaskStatus(row["status"]), excluded=frozenset(json.loads(row["excluded_providers"])),
-                   not_before=row["not_before"], provider=row["provider"])
+                   not_before=row["not_before"], provider=row["provider"], kind=row.get("pending_kind") or "code")
 
 
 def promotable(tasks: list[TaskView]) -> list[str]:
@@ -107,8 +112,7 @@ def candidates(spec: TaskSpec, mode: str, probes: dict[str, AdapterProbe], *, ex
 
 def pick_dispatch(ready: list[TaskView], active: list[TaskView], *, policy: Policy,
                   probes: dict[str, AdapterProbe], klass_of: dict[str, str], disabled: set[str],
-                  running_agents: list[tuple[str, str]], now: float | None = None,
-                  mode: str = "code") -> list[tuple[str, str]]:
+                  running_agents: list[tuple[str, str]], now: float | None = None) -> list[tuple[str, str]]:
     """Choose (task_id, agent) pairs to start now, honouring all limits."""
     now = time.time() if now is None else now
     cap = capacity_from(policy, running_agents)
@@ -119,7 +123,7 @@ def pick_dispatch(ready: list[TaskView], active: list[TaskView], *, policy: Poli
             continue
         if any(sets_overlap(t.spec.allowed_paths, other) for other in claimed):
             continue  # serialise conflicting exclusive ownership
-        cands = candidates(t.spec, mode, probes, excluded=t.excluded, disabled=disabled)
+        cands = candidates(t.spec, t.mode, probes, excluded=t.excluded, disabled=disabled)
         order = list(policy.agents)  # policy order is the tie-breaker
         cands.sort(key=lambda n: (cap.running_by_agent.get(n, 0), order.index(n)))
         for agent in cands:
@@ -132,8 +136,7 @@ def pick_dispatch(ready: list[TaskView], active: list[TaskView], *, policy: Poli
     return chosen
 
 
-def unroutable(ready: list[TaskView], *, probes: dict[str, AdapterProbe], disabled: set[str],
-               mode: str = "code") -> list[str]:
+def unroutable(ready: list[TaskView], *, probes: dict[str, AdapterProbe], disabled: set[str]) -> list[str]:
     """READY tasks for which no agent could *ever* run (ignoring current load)."""
     return [t.task_id for t in ready
-            if not candidates(t.spec, mode, probes, excluded=t.excluded, disabled=disabled)]
+            if not candidates(t.spec, t.mode, probes, excluded=t.excluded, disabled=disabled)]

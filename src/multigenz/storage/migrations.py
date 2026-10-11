@@ -50,6 +50,8 @@ MIGRATIONS: list[str] = [
         branch TEXT,
         feedback TEXT,
         repair_from TEXT,
+        pending_kind TEXT NOT NULL DEFAULT 'code',
+        conflict_target TEXT,
         failure_reason TEXT,
         integrated_commit TEXT,
         updated_at TEXT NOT NULL,

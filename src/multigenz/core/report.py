@@ -50,6 +50,7 @@ def build_report(store: Store, run_id: str) -> dict:
             {"task_id": e["task_id"], "attempt_id": e["attempt_id"], "passed": e["payload"].get("passed"),
              "reports": e["payload"].get("test_reports", [])}
             for e in validations],
+        "final_tests": [e["payload"] for e in store.events(run_id, kinds=("integration.final_tests",))],
         "integrations": [{k: i[k] for k in ("task_id", "status", "candidate_commit", "result_commit", "detail")}
                          for i in store.list_integrations(run_id)],
         "artifacts": [{k: a[k] for k in ("kind", "path", "sha256", "task_id")} for a in store.list_artifacts(run_id)],
