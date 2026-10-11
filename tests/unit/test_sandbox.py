@@ -223,3 +223,23 @@ async def test_script_cli_finds_its_runtime_next_to_itself(tmp_path):
     w = UsernsBackend().wrap(req)
     res, tail = await ProcessManager().run(CommandSpec(argv=w.argv, cwd=w.cwd, env=w.env, timeout_seconds=30))
     assert res.exit_code == 0 and any("RUNTIME-OK" in t for t in tail), tail
+
+
+async def test_agent_tools_do_not_litter_the_worktree_by_default(tmp_path):
+    """A test run inside the worktree must not leave bytecode / .pytest_cache (they would fail path validation)."""
+    res, out, _ = await sh(tmp_path, 'echo "$PYTHONDONTWRITEBYTECODE|$PYTEST_ADDOPTS"')
+    assert out.splitlines()[-1] == "1|-p no:cacheprovider"
+    res, out, _ = await sh(tmp_path, 'echo "$PYTEST_ADDOPTS"', env={"PYTEST_ADDOPTS": "-q"})
+    assert out.splitlines()[-1] == "-q"  # an explicit per-agent value still wins
+
+
+def test_container_env_file_carries_the_same_hygiene_defaults(tmp_path):
+    b = ContainerBackend("podman", "img", None)
+    b.runtime = "podman"  # no real runtime needed: only the generated env file is inspected
+    req = SandboxRequest(argv=["a"], env={"X": "1"}, workspace=tmp_path, state_dir=tmp_path / "st", sandbox_id="x",
+                         network="none")
+    w = b.wrap(req)
+    text = (tmp_path / "st" / "container.env").read_text()
+    if w.cleanup:
+        w.cleanup()
+    assert "PYTHONDONTWRITEBYTECODE=1" in text and "PYTEST_ADDOPTS=-p no:cacheprovider" in text and "X=1" in text

@@ -31,6 +31,9 @@ SANDBOX_PATH = "/usr/local/bin:/usr/bin:/bin"
 WORKSPACE = "/workspace"
 INBOX = "/mg/in"
 SANDBOX_HOME = "/home/agent"
+# Tools an agent runs inside its worktree (a test run) must not litter it with bytecode/caches: those would be
+# "unexpected paths" and cost a charged attempt. Overridable per agent through req.env.
+HYGIENE_ENV = {"PYTHONDONTWRITEBYTECODE": "1", "PYTEST_ADDOPTS": "-p no:cacheprovider"}
 LAUNCHER_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 ETC_RO = ["/etc/ssl", "/etc/alternatives", "/etc/ld.so.cache", "/etc/ld.so.conf",
           "/etc/ld.so.conf.d", "/etc/localtime"]
@@ -129,7 +132,7 @@ class UsernsBackend(SandboxBackend):
         if req.inbox is not None:
             ro.append([str(req.inbox), INBOX])
         rw = [[str(req.workspace), WORKSPACE]] + [[s, d] for s, d in req.rw_mounts]
-        env = {"PATH": SANDBOX_PATH, "HOME": SANDBOX_HOME, "TMPDIR": "/tmp", "LANG": "C.UTF-8"}
+        env = {"PATH": SANDBOX_PATH, "HOME": SANDBOX_HOME, "TMPDIR": "/tmp", "LANG": "C.UTF-8", **HYGIENE_ENV}
         env.update(req.env)
         etc_files = {
             "passwd": f"root:x:0:0:agent:{SANDBOX_HOME}:/bin/sh\nnobody:x:65534:65534:nobody:/:/usr/sbin/nologin\n",
@@ -341,7 +344,7 @@ class ContainerBackend(SandboxBackend):
         env_file = req.state_dir / "container.env"  # secrets stay out of argv / ps output
         fd = os.open(env_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            for k, v in req.env.items():
+            for k, v in {**HYGIENE_ENV, **req.env}.items():
                 if "\n" in v or "\n" in k:
                     raise IsolationUnavailableError("newline in environment value")
                 fh.write(f"{k}={v}\n")

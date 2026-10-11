@@ -434,7 +434,9 @@ async def test_at_13_agent_cannot_read_host_credentials(tmp_path, repo, scenario
     assert_only_mount_ancestors(log_a, "/root", SUPPORT, scenario)  # absent, or just the path down to a mounted dir
     assert "LS-FAIL " + str(fake_home) in log_a and "LS-FAIL /var" in log_a
     env_names = {line.split("=")[0][4:] for line in log_a.splitlines() if line.startswith("ENV ")}
-    assert env_names <= {"HOME", "LANG", "PATH", "PWD", "TMPDIR", "GRANTED_KEY", "OLDPWD", "SHLVL", "_"}
+    # (PYTHONDONTWRITEBYTECODE / PYTEST_ADDOPTS are the sandbox's own non-secret hygiene defaults)
+    assert env_names <= {"HOME", "LANG", "PATH", "PWD", "TMPDIR", "GRANTED_KEY", "OLDPWD", "SHLVL", "_",
+                         "PYTHONDONTWRITEBYTECODE", "PYTEST_ADDOPTS"}
     # per-agent credential grant: only the agent that was granted the variable sees it (and it is redacted in logs)
     prov = {a["task_id"]: a["provider"] for a in st.list_attempts(rid)}
     granted_task = next(t for t, p in prov.items() if p == "alpha")
