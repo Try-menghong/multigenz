@@ -85,3 +85,9 @@ checks sequence, hash chain, transition legality and equality with the stored st
 Claude runs unattended with `--permission-mode acceptEdits`: it can edit files in its worktree but not run shell commands,
 so it cannot run tests itself — the orchestrator runs the profile and feeds failures back. This path has not been exercised
 against the live service in this repository's tests.
+
+## Known planner behaviour
+Planners (including real Claude) sometimes add a "review / run the tests" task that changes no files. Such a task can never
+be verified and fails with `agent produced no changes`, making the whole run FAILED even though the real work was integrated
+and verified. The planner prompt now forbids these tasks; if one still appears, the integration branch holds the good work
+(`runs show` lists it) and you can merge that branch yourself.

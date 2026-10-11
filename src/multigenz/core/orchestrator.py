@@ -554,6 +554,13 @@ class Orchestrator:
                 if c.log_path:
                     st.add_artifact(rid, "test-log", c.log_path, task_id=task_id, attempt_id=attempt_id)
         if not vr.passed:
+            only_empty = {c.name for c in vr.failures} == {"non_empty_diff"} and not vr.test_reports
+            if only_empty and not is_conflict:
+                self._validation_failed(task_id, attempt_id, head, base, "agent produced no changes",
+                                        "You produced no file changes. Every task must create or modify files within "
+                                        "its allowed paths; do not stop at analysis. If nothing needs to change, the "
+                                        "plan was wrong - the orchestrator will report that.")
+                return
             if is_conflict:
                 self._begin_conflict_repair(task, attempt_id, task["repair_from"],
                                             "conflict resolution failed validation:\n" + vr.feedback())

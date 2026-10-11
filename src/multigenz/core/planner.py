@@ -53,6 +53,9 @@ Rules (the orchestrator rejects the plan if any is violated):
 - validation_profile, if set, must be one of: {sorted(profiles) or '[none configured]'}. Tests are run by the host,
   never by you; acceptance_commands are informational only and are never executed.
 - put tests for a task in that task's allowed_paths. Keep tasks small and independently verifiable.
+- EVERY task must create or modify at least one file inside its allowed_paths. Never create review, verification,
+  "run the tests" or "regression check" tasks: the orchestrator runs the tests itself after every task, and a task that
+  changes nothing can never succeed. Fold any needed fixes to existing files into the task that causes them.
 """
 
 

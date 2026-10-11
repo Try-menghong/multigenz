@@ -87,3 +87,9 @@ def test_reviewer_passes_ordinary_change(rv):
     g, base, repo = rv
     head = commit_changes(g, repo, base, lambda p: (p / "src" / "n.py").write_text("x = 1\n"))
     assert all(c.passed for c in review(g, base, head).values())
+
+
+def test_planning_prompt_forbids_verification_only_tasks():
+    from multigenz.core.planner import planning_prompt
+    p = planning_prompt("goal", ["a.py"], ["coding"], ["unit"])
+    assert "EVERY task must create or modify at least one file" in p and "regression check" in p

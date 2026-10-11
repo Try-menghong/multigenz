@@ -234,3 +234,15 @@ async def test_report_lists_unknown_costs_and_no_push(tmp_path, repo, scenario):
     assert rep["cost"]["unknown_for_attempts"] == 1 and "unknown" in rep["cost"]["note"]
     assert rep["attempts"][0]["cost_usd"] == "unknown"
     assert git(repo, "remote").strip() == ""
+
+
+async def test_task_that_changes_nothing_fails_with_an_accurate_reason(tmp_path, repo, scenario):
+    # e.g. a planner-invented "review the suite" task: the agent honestly makes no edit
+    write_scenario(scenario, "review", {"attempts": {"default": [{"print": ["Everything looks fine, nothing to change."]}]}})
+    write_scenario(scenario, "a", writes("a/f.py", "1\n"))
+    rid, out, st = await run(pol(scenario), repo, plan_of(T("a", "a/"), T("review", "a/f.py", ["a"])), tmp_path)
+    t = st.get_task(rid, "review")
+    assert out.status == "failed" and st.get_task(rid, "a")["status"] == "succeeded"
+    assert t["status"] == "failed" and "agent produced no changes" in t["failure_reason"]
+    assert len(st.list_attempts(rid, "review")) == 2  # one repair attempt, bounded
+    assert git(repo, "rev-list", "--count", f"main..{st.get_run(rid)['integration_branch']}") == "1"
