@@ -85,3 +85,21 @@ def test_invalid_policy_fails_closed(patch, msg):
 def test_missing_policy_file_is_error(tmp_path):
     with pytest.raises(ConfigError):
         load_policy(tmp_path / "nope.yaml")
+
+
+def test_enable_claude_pytest_script_edits_a_policy_safely(tmp_path):
+    import subprocess, sys
+    from tests.support.helpers import REPO_ROOT
+    src = (REPO_ROOT / "config" / "policy.claude.example.yaml").read_text().replace("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")
+    f = tmp_path / "my-policy.yaml"
+    f.write_text(src)
+    run = lambda: subprocess.run([sys.executable, str(REPO_ROOT / "scripts" / "enable_claude_pytest.py"), str(f), "4"],
+                                 capture_output=True, text=True)
+    r = run()
+    assert r.returncode == 0, r.stdout + r.stderr
+    pol = load_policy(f)
+    assert [i.name for i in pol.agents["claude"].invocations] == ["print-accept-edits-pytest", "print-plan"]
+    assert pol.orchestrator.max_task_attempts == 4 and "# must be on PATH" in f.read_text()  # comments survive
+    assert (tmp_path / "my-policy.yaml.bak").read_text() == src
+    again = run()
+    assert again.returncode == 1 and "already exists" in again.stdout  # idempotent: never adds a second block
