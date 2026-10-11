@@ -112,3 +112,6 @@ def test_enable_claude_pytest_script_edits_a_policy_safely(tmp_path):
     up = subprocess.run([sys.executable, str(REPO_ROOT / "scripts" / "enable_claude_pytest.py"), str(old)], capture_output=True, text=True)
     assert up.returncode == 0 and "Bash(pytest:*)" in old.read_text(), up.stdout + up.stderr
     assert [i.name for i in load_policy(old).agents["claude"].invocations] == ["print-accept-edits-pytest", "print-plan"]
+    gone = subprocess.run([sys.executable, str(REPO_ROOT / "scripts" / "enable_claude_pytest.py"), str(tmp_path / "nope.yaml")],
+                          capture_output=True, text=True)
+    assert gone.returncode == 2 and "no such policy file" in gone.stdout and "Traceback" not in gone.stderr

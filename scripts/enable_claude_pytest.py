@@ -43,6 +43,9 @@ def main() -> int:
         return 2
     path = Path(sys.argv[1])
     attempts = sys.argv[2] if len(sys.argv) > 2 else "4"
+    if not path.is_file():
+        print(f"{path}: no such policy file (hint: your policy is probably $MULTIGENZ_POLICY)")
+        return 2
     lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
     text0 = "".join(lines)
     if OLD_ALLOW in text0:  # upgrade a policy written by an earlier version of this script
