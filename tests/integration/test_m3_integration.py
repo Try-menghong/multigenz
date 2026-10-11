@@ -258,7 +258,8 @@ async def test_parallel_completions_integrate_serially_without_losing_updates(tm
 async def test_test_profiles_run_inside_the_sandbox(tmp_path, repo, scenario):
     probe = ("import os, unittest\n\nclass T(unittest.TestCase):\n"
              "    def test_isolated(self):\n"
-             "        self.assertFalse(os.path.exists('/root'))\n"
+             "        self.assertFalse(os.path.exists('/root/.ssh'))\n"
+             "        self.assertEqual(os.environ['HOME'], '/home/agent')\n"
              "        self.assertNotIn('MG_HOST_SECRET_TOKEN', os.environ)\n"
              "        with self.assertRaises(OSError):\n            open('/usr/should-not-write', 'w')\n")
     import os

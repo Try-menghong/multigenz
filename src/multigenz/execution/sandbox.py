@@ -101,10 +101,31 @@ class UsernsBackend(SandboxBackend):
                 symlinks.append([os.readlink(d), d.lstrip("/")])
             elif os.path.isdir(d):
                 ro.append([d, d])
+        def add_ro(src: str, dst: str) -> None:
+            real = os.path.realpath(src)
+            ro.append([real, dst])
+            if dst == src and real != dst:
+                # a symlinked directory (e.g. a uv-managed Python's unversioned prefix): symlinks inside the tree
+                # often point at the *real* path, so it must be visible there as well
+                ro.append([real, real])
+
+        def add_ro_with_venv(src: str, dst: str) -> None:
+            add_ro(src, dst)
+            # A mounted virtualenv is only usable if the interpreter prefix named by its pyvenv.cfg ("home =") is
+            # visible at that very path (it is often an unversioned symlink such as cpython-3.14-linux-x86_64-gnu).
+            cfg = Path(src) / "pyvenv.cfg"
+            if dst == src and cfg.is_file():
+                for line in cfg.read_text(errors="replace").splitlines():
+                    key, _, val = line.partition("=")
+                    if key.strip() == "home" and os.path.isabs(val.strip()):
+                        prefix = os.path.dirname(val.strip().rstrip("/"))
+                        if os.path.isdir(prefix):
+                            add_ro(prefix, prefix)
+
         for src in self.extra_ro:
-            ro.append([os.path.realpath(src), os.path.realpath(src)])
+            add_ro_with_venv(src, src)
         for src, dst in req.ro_mounts:
-            ro.append([os.path.realpath(src), dst])
+            add_ro_with_venv(src, dst)
         if req.inbox is not None:
             ro.append([str(req.inbox), INBOX])
         rw = [[str(req.workspace), WORKSPACE]] + [[s, d] for s, d in req.rw_mounts]
@@ -142,16 +163,24 @@ class UsernsBackend(SandboxBackend):
         req.state_dir.mkdir(parents=True, exist_ok=True)
         (req.state_dir / "rootfs").mkdir(exist_ok=True)
         spec = self._base_spec(req)
-        # Command binaries outside the system dirs must be readable inside the sandbox.
+        # The command (and every hop of its symlink chain) must be visible inside the sandbox. Coverage is judged by
+        # where things are mounted (destinations), not where they come from.
+        def covered(path: str) -> bool:
+            return any(path == d or path.startswith(d.rstrip("/") + "/")
+                       for _, d in [*spec["ro_binds"], *spec["rw_binds"]]) or path.startswith("/usr/")
+
         exe = req.argv[0]
         if os.path.isabs(exe):
-            real = os.path.realpath(exe)
-            if not real.startswith("/usr/") and not any(
-                real.startswith(os.path.realpath(p) + "/") or real == os.path.realpath(p)
-                for p in [s for s, _ in spec["ro_binds"]]
-            ):
-                d = os.path.dirname(real)
-                spec["ro_binds"].append([d, d])
+            hop, seen = exe, set()
+            while True:
+                if not covered(hop):
+                    d = os.path.dirname(hop)
+                    spec["ro_binds"].append([os.path.realpath(d), d])
+                if not os.path.islink(hop) or hop in seen:
+                    break
+                seen.add(hop)
+                tgt = os.readlink(hop)
+                hop = tgt if os.path.isabs(tgt) else os.path.normpath(os.path.join(os.path.dirname(hop), tgt))
         spec_path = req.state_dir / "nsboot.json"
         fd = os.open(spec_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as fh:

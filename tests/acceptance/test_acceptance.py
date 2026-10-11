@@ -77,6 +77,26 @@ def wait_for(pred, timeout=40.0):
     return False
 
 
+def mount_ancestors(*paths) -> dict[str, set[str]]:
+    """Directories the sandbox must create only as mount points: {parent dir: {child names on the way to a mount}}."""
+    out: dict[str, set[str]] = {}
+    for p in paths:
+        parts = Path(p).resolve().parts
+        for i in range(len(parts) - 1):  # parent = parts[:i+1], child = parts[i+1]
+            out.setdefault(str(Path(*parts[: i + 1])), set()).add(parts[i + 1])
+    return out
+
+
+def assert_only_mount_ancestors(log: str, listed: str, *mounts) -> None:
+    """`LS <listed>:` shows nothing but ancestors of explicitly mounted paths (no dotfiles, no credentials dirs)."""
+    anc = mount_ancestors(*mounts).get(listed, set())
+    line = next((l for l in log.splitlines() if l.startswith(f"LS {listed}: ") or l.startswith(f"LS-FAIL {listed}")), "")
+    if line.startswith("LS-FAIL"):
+        return
+    entries = eval(line.split(": ", 1)[1])  # noqa: S307 - our own test output
+    assert set(entries) <= anc and not any(e.startswith(".") for e in entries), (listed, entries, anc)
+
+
 GOOD_TEST = "import unittest\n\nclass T(unittest.TestCase):\n    def test_ok(self):\n        self.assertTrue(True)\n"
 BAD_TEST = "import unittest\n\nclass T(unittest.TestCase):\n    def test_bad(self):\n        self.assertEqual(1, 2)\n"
 
@@ -264,7 +284,10 @@ async def test_at_09_worktrees_cannot_overwrite_each_other(tmp_path, repo, scena
         log = Path(x["log_dir"], "stdout.log").read_text()
         assert str(Path(other["worktree"]).parent) not in log and "LS /: [" in log
         top = eval(log.split("LS /: ")[1].splitlines()[0])  # noqa: S307 - our own test output
-        assert "workspace" in top and "home" in top and "root" not in top and "var" not in top
+        std = {"bin", "dev", "etc", "home", "lib", "lib64", "lib32", "proc", "sbin", "tmp", "usr", "workspace", "mg"}
+        extra = set(top) - std
+        assert "workspace" in top and "var" not in top
+        assert extra <= set(mount_ancestors(SUPPORT, scenario).get("/", set())), extra  # only mount-point ancestors
     g = Git(repo, run_id=rid)
     wm = WorktreeManager(g, Path(ia["worktree"]).parent)
     with pytest.raises(WorktreeError):
@@ -408,7 +431,8 @@ async def test_at_13_agent_cannot_read_host_credentials(tmp_path, repo, scenario
     for secret in ("HOSTKEY", "HOSTAWSSECRET", "sk-ant-HOSTSECRET", "ghp_HHHH", "innocuous-value-xyz"):
         assert secret not in log_a
     assert "ENV ANTHROPIC_API_KEY" not in log_a and "ENV GITHUB_TOKEN" not in log_a and "ENV INNOCUOUS_NAME" not in log_a
-    assert "LS-FAIL /root" in log_a and "LS-FAIL " + str(fake_home) in log_a
+    assert_only_mount_ancestors(log_a, "/root", SUPPORT, scenario)  # absent, or just the path down to a mounted dir
+    assert "LS-FAIL " + str(fake_home) in log_a and "LS-FAIL /var" in log_a
     env_names = {line.split("=")[0][4:] for line in log_a.splitlines() if line.startswith("ENV ")}
     assert env_names <= {"HOME", "LANG", "PATH", "PWD", "TMPDIR", "GRANTED_KEY", "OLDPWD", "SHLVL", "_"}
     # per-agent credential grant: only the agent that was granted the variable sees it (and it is redacted in logs)

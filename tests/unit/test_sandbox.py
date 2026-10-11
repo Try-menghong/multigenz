@@ -151,3 +151,45 @@ async def test_proc_sys_is_read_only_and_kernel_interfaces_masked(tmp_path):
     lines = out.splitlines()
     assert sum("Read-only file system" in l for l in lines) == 2
     assert lines[-2:] == ["0", "0"]  # masked with /dev/null
+
+
+async def test_symlinked_prefix_and_exe_symlink_chain_are_visible(tmp_path):
+    """uv-style layout: venv/bin/python -> <versioned>/bin/tool, while the prefix is given by an unversioned symlink dir."""
+    versioned = tmp_path / "py" / "cpython-1.2.3"
+    (versioned / "bin").mkdir(parents=True)
+    tool = versioned / "bin" / "tool3"
+    tool.write_text("#!/bin/sh\necho TOOL-RAN\n")
+    tool.chmod(0o755)
+    (tmp_path / "py" / "cpython-1.2").symlink_to(versioned)           # unversioned prefix = symlinked directory
+    venv = tmp_path / "venv"
+    (venv / "bin").mkdir(parents=True)
+    (venv / "bin" / "tool").symlink_to(versioned / "bin" / "tool3")   # exe symlink points at the versioned real path
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    b = UsernsBackend()
+    req = SandboxRequest(argv=[str(venv / "bin" / "tool")], env={}, workspace=ws, state_dir=tmp_path / "st",
+                         sandbox_id="t", ro_mounts=[(str(venv), str(venv)), (str(tmp_path / "py" / "cpython-1.2"),
+                                                                              str(tmp_path / "py" / "cpython-1.2"))])
+    w = b.wrap(req)
+    res, tail = await ProcessManager().run(CommandSpec(argv=w.argv, cwd=w.cwd, env=w.env, timeout_seconds=30))
+    assert res.exit_code == 0 and "TOOL-RAN" in tail, tail
+
+
+async def test_mounted_venv_gets_the_interpreter_prefix_named_in_pyvenv_cfg(tmp_path):
+    real = tmp_path / "py" / "cpython-9.9.9"
+    (real / "bin").mkdir(parents=True)
+    (real / "lib").mkdir()
+    (real / "lib" / "marker").write_text("STDLIB-HERE")
+    (real / "bin" / "tool").write_text("#!/bin/sh\ncat \"$(dirname $0)/../lib/marker\"\n")
+    (real / "bin" / "tool").chmod(0o755)
+    (tmp_path / "py" / "cpython-9.9").symlink_to(real)  # the name pyvenv.cfg uses; unrelated to the path we mount
+    venv = tmp_path / "venv"
+    (venv / "bin").mkdir(parents=True)
+    (venv / "pyvenv.cfg").write_text(f"home = {tmp_path / 'py' / 'cpython-9.9' / 'bin'}\n")
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    req = SandboxRequest(argv=["/bin/sh", "-c", f"cat {tmp_path / 'py' / 'cpython-9.9' / 'lib' / 'marker'}"], env={}, workspace=ws,
+                         state_dir=tmp_path / "st", sandbox_id="t", ro_mounts=[(str(venv), str(venv))])
+    w = UsernsBackend().wrap(req)
+    res, tail = await ProcessManager().run(CommandSpec(argv=w.argv, cwd=w.cwd, env=w.env, timeout_seconds=30))
+    assert res.exit_code == 0 and "STDLIB-HERE" in tail, tail
