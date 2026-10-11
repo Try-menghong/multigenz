@@ -246,3 +246,11 @@ async def test_task_that_changes_nothing_fails_with_an_accurate_reason(tmp_path,
     assert t["status"] == "failed" and "agent produced no changes" in t["failure_reason"]
     assert len(st.list_attempts(rid, "review")) == 2  # one repair attempt, bounded
     assert git(repo, "rev-list", "--count", f"main..{st.get_run(rid)['integration_branch']}") == "1"
+
+
+async def test_failure_blocks_the_whole_dependency_chain_with_the_right_reason(tmp_path, repo, scenario):
+    write_scenario(scenario, "a", {"attempts": {"default": [{"exit": 1}]}})
+    plan = plan_of(T("a", "a/", max_attempts=1), T("b", "b/", ["a"]), T("c", "c/", ["b"]), T("d", "d/", ["c"]))
+    rid, out, st = await run(pol(scenario), repo, plan, tmp_path)
+    reasons = {t["task_id"]: t["failure_reason"] for t in st.list_tasks(rid)}
+    assert reasons["b"] == "blocked by a" and reasons["c"] == "blocked by b" and reasons["d"] == "blocked by c"

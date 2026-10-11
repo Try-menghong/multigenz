@@ -17,6 +17,22 @@ agents:
       env: [ANTHROPIC_API_KEY]    # injected into THIS agent's sandbox only; redacted from every log/event/report
       # Claude Pro/Max subscription instead of an API key: run `claude setup-token` once, export the token it prints as
       # CLAUDE_CODE_OAUTH_TOKEN, and list THAT here instead (e.g. env: [CLAUDE_CODE_OAUTH_TOKEN]).
+    # OPTIONAL, recommended once the basics work: let Claude run the test suite itself INSIDE the sandbox so it can
+    # iterate before submitting (the default invocation can only edit files, so every attempt is a blind guess).
+    # Replaces the built-in invocations, so the read-only planning one is repeated. The sandbox is the security boundary;
+    # the orchestrator still runs the real validation independently.
+    # invocations:
+    #   - name: print-accept-edits-pytest
+    #     argv: ["{command}", "--print", "--permission-mode", "acceptEdits",
+    #            "--allowedTools", "Bash(python3 -m pytest:*)", "--no-session-persistence"]
+    #     stdin: prompt
+    #     requires_help_tokens: ["--print", "--permission-mode", "\"acceptEdits\"", "--allowedTools", "--no-session-persistence"]
+    #     modes: [code, conflict]
+    #   - name: print-plan
+    #     argv: ["{command}", "--print", "--permission-mode", "plan", "--no-session-persistence"]
+    #     stdin: prompt
+    #     requires_help_tokens: ["--print", "--permission-mode", "\"plan\"", "--no-session-persistence"]
+    #     modes: [plan, review, analysis]
 execution:
   isolation: userns
   network: host                   # Claude must reach the API. UNRESTRICTED network for the agent (see docs/SECURITY.md)

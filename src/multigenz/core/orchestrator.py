@@ -232,11 +232,17 @@ class Orchestrator:
     def _advance_states(self, views: list[sched.TaskView]) -> None:
         for tid in sched.promotable(views):
             self.sm.task(self.run_id, tid, S.READY, reason="all prerequisites validated and integrated")
-        for tid, cause in sched.blocked_by_failure(views):
-            cur = self.store.get_task(self.run_id, tid)
-            if cur["status"] in (S.PENDING.value, S.READY.value):
-                self.sm.task(self.run_id, tid, S.BLOCKED, reason=f"prerequisite {cause} did not succeed",
-                             failure_reason=f"blocked by {cause}")
+        while True:  # a blocked task can block its own dependents in the same pass
+            changed = False
+            for tid, cause in sched.blocked_by_failure(views):
+                cur = self.store.get_task(self.run_id, tid)
+                if cur["status"] in (S.PENDING.value, S.READY.value):
+                    self.sm.task(self.run_id, tid, S.BLOCKED, reason=f"prerequisite {cause} did not succeed",
+                                 failure_reason=f"blocked by {cause}")
+                    changed = True
+            if not changed:
+                break
+            views = [sched.TaskView.from_row(r) for r in self.store.list_tasks(self.run_id)]
 
     def _cancel_unstarted(self, views: list[sched.TaskView]) -> None:
         for v in views:

@@ -23,7 +23,7 @@ PLAN_EXAMPLE = {
     "tasks": [{
         "schema_version": 1, "task_id": "models", "title": "short title", "objective": "what to build and why",
         "dependencies": [], "allowed_paths": ["app/models.py", "tests/test_models.py"],
-        "required_capabilities": ["coding"], "acceptance_commands": [], "max_attempts": 2, "timeout_seconds": 900,
+        "required_capabilities": ["coding"], "acceptance_commands": [],
         "shared_paths": [], "required_artifacts": ["app/models.py"], "validation_profile": None}],
 }
 
@@ -53,6 +53,7 @@ Rules (the orchestrator rejects the plan if any is violated):
 - validation_profile, if set, must be one of: {sorted(profiles) or '[none configured]'}. Tests are run by the host,
   never by you; acceptance_commands are informational only and are never executed.
 - put tests for a task in that task's allowed_paths. Keep tasks small and independently verifiable.
+- do not set max_attempts or timeout_seconds: the administrator controls them.
 - EVERY task must create or modify at least one file inside its allowed_paths. Never create review, verification,
   "run the tests" or "regression check" tasks: the orchestrator runs the tests itself after every task, and a task that
   changes nothing can never succeed. Fold any needed fixes to existing files into the task that causes them.
@@ -116,6 +117,13 @@ class AgentPlanner:
             if plan is not None:
                 issues = validate_plan(plan, self.svc.engine, available_capabilities=caps)
             if not issues and plan is not None:
+                # Attempt and time limits are administrator policy: a plan that does not ask for something
+                # specific gets the policy values (a plan may only ask for LESS, enforced via min() at run time).
+                for t in plan.tasks:
+                    if "max_attempts" not in t.model_fields_set:
+                        t.max_attempts = min(5, pol.orchestrator.max_task_attempts)
+                    if "timeout_seconds" not in t.model_fields_set:
+                        t.timeout_seconds = pol.orchestrator.task_timeout_seconds
                 self.emit("plan.accepted", {"agent": agent, "tasks": [t.task_id for t in plan.tasks]})
                 return plan
             tries += 1

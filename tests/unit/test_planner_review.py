@@ -93,3 +93,28 @@ def test_planning_prompt_forbids_verification_only_tasks():
     from multigenz.core.planner import planning_prompt
     p = planning_prompt("goal", ["a.py"], ["coding"], ["unit"])
     assert "EVERY task must create or modify at least one file" in p and "regression check" in p
+
+
+async def test_plan_without_explicit_limits_gets_the_administrators_policy_values(tmp_path, scenario):
+    """The planner's default (2 attempts / 900 s) must not silently cap a more generous administrator policy."""
+    import json
+    from multigenz.core.bootstrap import build_services
+    from multigenz.core.budget import Budget
+    from multigenz.core.planner import AgentPlanner
+    from multigenz.core.readonly import ReadOnlyRunner
+    from multigenz.execution.git import Git
+    from tests.support.helpers import make_repo, scripted_policy, write_scenario
+    plan = {"tasks": [{"task_id": "a", "title": "t", "objective": "o", "allowed_paths": ["a/"]},
+                      {"task_id": "b", "title": "t", "objective": "o", "allowed_paths": ["b/"], "max_attempts": 1,
+                       "timeout_seconds": 60}]}
+    write_scenario(scenario, "plan", {"modes": {"plan": {"default": [{"emit_json": plan}]}}})
+    pol = scripted_policy(scenario, isolation="none", agents={"arch": ["architecture", "coding"]},
+                          orchestrator={"max_task_attempts": 4, "task_timeout_seconds": 1500})
+    svc = await build_services(pol)
+    repo = make_repo(tmp_path / "r")
+    git = Git(repo)
+    doc = await AgentPlanner(svc, ReadOnlyRunner(svc, git, tmp_path / "ro", Budget(None), run_id="p")).plan(
+        "goal", git.head(), git.ls_tree(git.head()))
+    a, b = doc.tasks
+    assert (a.max_attempts, a.timeout_seconds) == (4, 1500)  # unspecified -> administrator policy
+    assert (b.max_attempts, b.timeout_seconds) == (1, 60)    # explicit request for less is honoured
