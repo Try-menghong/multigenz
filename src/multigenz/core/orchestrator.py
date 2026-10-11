@@ -300,8 +300,8 @@ class Orchestrator:
             else:
                 base = t["repair_from"] or (self.merger.head() if spec.dependencies else run["base_commit"])
             attempt_id = new_attempt_id()
-            if kind == "conflict":
-                branch = task_branch(rid, task_id, attempt=t["conflict_repairs"], kind="conflict")
+            if kind == "conflict":  # one unique branch per attempt, so a retried/interrupted attempt never collides
+                branch = task_branch(rid, task_id, attempt=number, kind="conflict")
             else:
                 branch = task_branch(rid, task_id, attempt=number)
             wt_name = branch.rsplit("/", 1)[1]
@@ -484,8 +484,10 @@ class Orchestrator:
             self.sm.task(self.run_id, task["task_id"], S.FAILED, reason="too many interruptions",
                          attempt_id=attempt_id, interruptions=n, failure_reason="exceeded max interruptions")
             return
+        # a conflict attempt always restarts from the validated task commit it is trying to merge, never from its own snapshot
+        keep = task["repair_from"] if task["pending_kind"] == "conflict" else (outcome.commit_sha or task["repair_from"])
         self.sm.task(self.run_id, task["task_id"], S.READY, reason="interrupted (resumable)", attempt_id=attempt_id,
-                     interruptions=n, repair_from=outcome.commit_sha or task["repair_from"],
+                     interruptions=n, repair_from=keep,
                      feedback="The previous attempt was interrupted. Partial work (if any) is in your working tree.")
 
     def _requeue_excluding(self, task: dict, agent: str, attempt_id: str, reason: str) -> None:

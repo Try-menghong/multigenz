@@ -14,7 +14,7 @@ _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,80}$")
 
 
 def task_branch(run_id: str, task_id: str, *, attempt: int = 1, kind: str = "code") -> str:
-    """multigenz/run-<id>/task-<task>[.aN | .cN]  (first code attempt has no suffix)."""
+    """multigenz/run-<id>/task-<task>[.aN | .cN]  (first code attempt has no suffix; N = attempt number)."""
     base = f"multigenz/run-{run_id}/task-{task_id}"
     if kind == "conflict":
         return f"{base}.c{attempt}"

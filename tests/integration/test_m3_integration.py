@@ -131,7 +131,7 @@ async def test_at10_merge_conflict_resolved_in_isolation_preserving_both_sides(t
     res_commit = ib[1]["commit_sha"]
     parents = git(repo, "rev-list", "--parents", "-n", "1", res_commit).split()[1:]
     assert len(parents) == 2 and ib[0]["commit_sha"] in parents
-    assert ib[1]["branch"].endswith("task-b.c1")
+    assert ib[1]["branch"].endswith("task-b.c2")  # conflict attempt = b's 2nd attempt
     assert st.get_task(rid, "b")["conflict_repairs"] == 1 and st.get_task(rid, "b")["charged_attempts"] == 0
     assert git(repo, "rev-parse", "main") == st.get_run(rid)["base_commit"]
 
@@ -270,3 +270,52 @@ async def test_test_profiles_run_inside_the_sandbox(tmp_path, repo, scenario):
     finally:
         del os.environ["MG_HOST_SECRET_TOKEN"]
     assert out.status == "succeeded", st.events(rid, kinds=("validation.result",))[0]["payload"]["test_reports"]
+
+
+async def test_interrupted_conflict_resolution_restarts_from_the_original_candidate(tmp_path, repo, scenario):
+    from multigenz.core.driver import resume_run
+    from multigenz.core.orchestrator import Orchestrator
+    from multigenz.core.runs import create_run
+
+    (repo / "config.txt").write_text("base\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "config")
+    # b's first conflict attempt (its 2nd attempt overall) hangs; the one after the interruption resolves
+    res = {"modes": {"conflict": {"2": [{"write": {"config.txt": "half-resolved\n"}, "sleep": 120}],
+                                  "default": [{"write": {"config.txt": "base\nfrom-a\nfrom-b\n"}}]}}}
+    write_scenario(scenario, "a", {"attempts": {"default": [{"write": {"config.txt": "base\nfrom-a\n", "a/f": "1"}}]}})
+    write_scenario(scenario, "b", {**res, "attempts": {"default": [{"sleep": 1.5, "write": {"config.txt": "base\nfrom-b\n", "b/f": "1"}}]}})
+    p = pol(scenario)
+    home = tmp_path / "mg-home"
+    svc = await build_services_for(p)
+    store = open_store(home, svc.redactor)
+    plan = plan_of(T("a", "a/", shared_paths=["config.txt"]), T("b", "b/", shared_paths=["config.txt"]))
+    rid = await create_run(store, svc, objective="o", repo=repo, plan=plan, home=home)
+    orch = Orchestrator(store, svc, rid, home)
+
+    async def interrupt_when_resolving():
+        for _ in range(300):
+            if any(a["kind"] == "conflict" and a["pid"] for a in store.list_attempts(rid, "b")):
+                break
+            await asyncio.sleep(0.1)
+        await asyncio.sleep(0.5)
+        orch.request_interrupt()
+
+    t = asyncio.create_task(interrupt_when_resolving())
+    out = await orch.execute()
+    await t
+    assert out.status == "interrupted" and store.get_task(rid, "b")["status"] == "ready"
+    first_candidate = store.list_attempts(rid, "b")[0]["commit_sha"]
+    assert store.get_task(rid, "b")["repair_from"] == first_candidate  # not the half-resolved snapshot
+    out2 = await resume_run(home, rid)
+    assert out2.status == "succeeded"
+    atts = store.list_attempts(rid, "b")
+    assert [(a["kind"], a["status"]) for a in atts] == [("code", "finished"), ("conflict", "interrupted"), ("conflict", "finished")]
+    assert len({a["branch"] for a in atts}) == 3 and atts[2]["base_commit"] == first_candidate
+    assert git(repo, "show", f"{store.get_run(rid)['integration_branch']}:config.txt") == "base\nfrom-a\nfrom-b"
+    assert store.get_task(rid, "b")["conflict_repairs"] == 1 and store.get_task(rid, "b")["charged_attempts"] == 0
+
+
+async def build_services_for(policy):
+    from multigenz.core.bootstrap import build_services
+    return await build_services(policy)

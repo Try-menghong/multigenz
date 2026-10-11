@@ -64,7 +64,9 @@ class Reconciler:
                      if has_work else "No partial work was found; start from scratch."))
             self.sm.task(self.run_id, att["task_id"], S.READY, reason="interrupted; lease released",
                          attempt_id=att["attempt_id"], interruptions=interruptions,
-                         repair_from=wt_commit if has_work else task["repair_from"], feedback=fb, not_before=None)
+                         repair_from=(task["repair_from"] if att["kind"] == "conflict"
+                                      else (wt_commit if has_work else task["repair_from"])),
+                         feedback=fb, not_before=None)
         # 3. tasks whose agent finished and were being validated/integrated: resume at validation
         for t in st.list_tasks(self.run_id):
             if t["status"] == S.VALIDATING.value:
