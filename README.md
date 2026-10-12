@@ -46,10 +46,11 @@ GitHub Pages is enabled (Settings → Pages → Source: GitHub Actions) and the 
 | `claude` | `claude --print --permission-mode acceptEdits` | real model runs (Claude Pro login, userns sandbox) | may run pytest itself; Pro/Max: export `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token` |
 | `opencode` | `opencode run --auto` (prompt on stdin) | end to end in the sandbox against a local scripted model | uses opencode's own login files, mounted read-only |
 | `cline` | `cline --yolo` / `cline --plan` | end to end in the sandbox against a local scripted model | uses `~/.cline/data/settings/providers.json` |
-| `codex` | `codex exec --sandbox danger-full-access` | flags verified against `codex exec --help` only | **opt-in** (`--trust-outer-sandbox`): Codex's own sandbox cannot start inside MultiGenz's |
+| `codex` | `codex exec --sandbox workspace-write` / `read-only` | end to end in the sandbox against a local scripted model | keeps its own bubblewrap sandbox inside MultiGenz's; uses `~/.codex/auth.json` |
 | `agy` | `agy --print --mode accept-edits` | experimental: flags from `agy --help`, never executed here | check with `multigenz agents run` first |
 
-Add one with `multigenz agents add <preset>`. Any other CLI with a non-interactive mode can be configured by hand
+Add one with `multigenz agents add <preset>`. To try your installed agents against their real providers (uses a little of
+each plan): `scripts/smoke_agents.sh`. Any other CLI with a non-interactive mode can be configured by hand
 (`agents.<name>.invocations`, see [docs/OPERATIONS.md](docs/OPERATIONS.md)); flags are always verified against the
 binary's own `--help` before use.
 
@@ -72,9 +73,9 @@ commits before continuing and never re-executes finished work.
 | Area | Evidence | Caveat |
 |---|---|---|
 | Planner → DAG → sandboxed tasks → validation → integration → report | 16 acceptance tests, E2E A/B/C (real FastAPI code, real pytest in the sandbox and again on the host) | those agents are **scripted stand-ins** |
-| Real coding-agent CLIs inside the sandbox | opencode 1.19 and Cline 3.0 plan, code, validate and integrate end to end (`tests/e2e/test_cli_agents.py`), including one run where Cline plans and opencode codes | the model behind them is a **local scripted server**, not a real provider |
+| Real coding-agent CLIs inside the sandbox | Codex 0.162, opencode 1.19 and Cline 3.0 plan, code, validate and integrate end to end (`tests/e2e/test_cli_agents.py`), including one run where Cline plans and opencode codes | the model behind them is a **local scripted server**, not a real provider |
 | Claude Code with a real model | several real runs by a user with a Claude Pro login (planning, repair after a failed attempt, integration) | not part of the automated suite (needs a login) |
-| Codex | `codex exec` driven by the mock outside MultiGenz; inside, its inner bwrap sandbox fails, so it needs `--trust-outer-sandbox` | the opt-in path has **not been executed** in development |
+| Codex | codex-cli 0.162.1 plans (`read-only`) and codes (`workspace-write`) end to end with its own sandbox nested inside MultiGenz's; its shell commands must exit 0 | local scripted model, not a real provider |
 | `userns` sandbox (read-only FS, hidden host env/home, caps dropped, pid ns; npm/node CLIs mounted automatically) | unit + AT-05/13/14 | Linux-only; no cgroup memory/CPU ceilings; no seccomp (see docs/SECURITY.md) |
 | `rootless-container` sandbox | argv construction unit-tested | **never run against a live runtime** |
 | Installer and download page | full install/upgrade/uninstall into a throwaway HOME, `curl … \| bash` from the served page, page checked in Chromium (desktop/phone, light/dark) | the public site is not deployed yet |

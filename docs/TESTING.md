@@ -7,12 +7,13 @@ pytest -m acceptance         # AT-01 .. AT-16
 pytest -m e2e                # scenarios A, B (repaired / unfixable), C
 pytest tests/unit tests/contract tests/integration tests/security
 scripts/verify_clean_install.sh   # builds the wheel, installs it into a FRESH venv, runs the whole suite against it
-pytest -m cli_agents         # real opencode / Cline (/ Codex) binaries driven end to end against a local mock model
+pytest -m cli_agents         # real Codex / opencode / Cline binaries driven end to end against a local mock model
 MULTIGENZ_TEST_INSTALLER=1 pytest tests/integration/test_installer.py   # real install into a throwaway HOME (downloads deps)
 ```
 Tests marked `needs_userns` are skipped (not faked) when unprivileged user namespaces are unavailable. `cli_agents` tests
-look for the binaries on `$MULTIGENZ_TEST_CLI_PATH` (default `$PATH` plus `/opt/agentclis/bin`) and skip missing ones;
-the Codex test additionally needs `MULTIGENZ_TEST_CODEX_OUTER_SANDBOX=1` because it runs Codex with its own sandbox off.
+look for the binaries on `$MULTIGENZ_TEST_CLI_PATH` (default `$PATH` plus `/opt/agentclis/bin`) and skip missing ones.
+`scripts/smoke_agents.sh` is the manual counterpart with REAL providers: it runs every enabled agent of your policy on a
+scratch repository and reports whether each produced a validated commit.
 The site test uses Chromium through Node's `playwright` package when available.
 
 ## Layout
@@ -28,7 +29,7 @@ FastAPI service), `tests/security` (regressions), `tests/contract`, `tests/suppo
 - The FastAPI authentication service in `tests/e2e/fixtures` is real code, tested by real pytest runs (inside the sandbox and
   again on the host); its "agent authorship" is scripted.
 - LiteLLM is exercised with an injected completion function.
-- **Real agent CLIs, scripted model.** `tests/e2e/test_cli_agents.py` runs the actual opencode and Cline binaries inside
+- **Real agent CLIs, scripted model.** `tests/e2e/test_cli_agents.py` runs the actual Codex, opencode and Cline binaries inside
   the sandbox, configured through their own login/config files (Cline's written by `cline auth` itself), against
   `tests/support/mock_llm.py`: an OpenAI-compatible server (chat completions and the Responses API) that answers the
   planner prompt with a JSON plan and a coding prompt with one tool call that creates a file, using whatever shell or
@@ -52,14 +53,16 @@ FastAPI service), `tests/security` (regressions), `tests/contract`, `tests/suppo
 ## Recorded results (2026-10-12)
 | run | where | result |
 |---|---|---|
-| full suite, dev tree, Python 3.13, with `MULTIGENZ_TEST_INSTALLER=1` and shellcheck | this container | 283 passed, 1 skipped (Codex opt-in) |
-| `scripts/verify_clean_install.sh` (wheel in a fresh Python 3.12.3 venv) | this container | 282 passed, 2 skipped (Codex opt-in; install-from-checkout needs `src/`) |
+| full suite, dev tree, Python 3.13, with `MULTIGENZ_TEST_INSTALLER=1` and shellcheck | this container | 284 passed |
+| `scripts/verify_clean_install.sh` (wheel in a fresh Python 3.12.3 venv) | this container | 283 passed, 1 skipped (install-from-checkout needs `src/`) |
+| `scripts/smoke_agents.sh` with codex, opencode, cline pointed at the mock model | this container | 3 of 3 validated |
 
-Both include the real opencode 1.19.0 and Cline 3.0.70 binaries (`tests/e2e/test_cli_agents.py`, against the local mock
-model), the installer (`curl | bash` from the served page, install/upgrade/uninstall into throwaway HOMEs) and the
-download page in Chromium. The installer was also run by hand from GitHub (`MULTIGENZ_REF=<branch>`) with uv and with
-the system Python. Not covered: Codex inside MultiGenz (needs your opt-in), agy (not installable here), real providers
-behind opencode/Cline.
+Both suite runs include the real Codex 0.162.1, opencode 1.19.0 and Cline 3.0.70 binaries (`tests/e2e/test_cli_agents.py`,
+against the local mock model; Codex with its own bubblewrap sandbox nested inside MultiGenz's), the installer
+(`curl | bash` from the served page, install/upgrade/uninstall into throwaway HOMEs) and the download page in Chromium.
+The installer was also run by hand from GitHub (`MULTIGENZ_REF=<branch>`) with uv and with the system Python.
+Not covered here: real providers behind Codex/opencode/Cline (this environment's network policy blocks them, e.g.
+`opencode.ai`), and agy (not installable here). Run `scripts/smoke_agents.sh` on a machine with your logins for that.
 
 ## Earlier results (2026-10-11)
 `scripts/verify_clean_install.sh` — wheel built, installed into a brand-new Python 3.12.3 virtualenv, the whole suite run

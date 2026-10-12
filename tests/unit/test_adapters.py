@@ -33,8 +33,8 @@ async def test_unknown_cli_has_no_assumed_flags():
     ads = build_adapters(pol)
     p = await ads["other"].probe()
     assert not p.enabled and "flags are never assumed" in p.reason
-    p = await ads["codex"].probe()  # Codex: never enabled implicitly; the reason says how an admin can opt in
-    assert not p.enabled and "--trust-outer-sandbox" in p.reason
+    p = await ads["codex"].probe()  # Codex built-ins are candidates: a binary whose help lacks their flags is refused
+    assert not p.enabled and "verified" in p.reason
 
 
 async def test_missing_binary_disabled():

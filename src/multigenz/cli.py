@@ -75,8 +75,6 @@ def init(
     agent: Annotated[Optional[list[str]], typer.Option(
         "--agent", "-a", help="Preset to include (repeatable). Default: every supported CLI found on PATH.")] = None,
     overwrite: Annotated[bool, typer.Option("--overwrite", help="Replace an existing policy (a .bak copy is kept).")] = False,
-    trust_outer_sandbox: Annotated[bool, typer.Option(
-        "--trust-outer-sandbox", help="Also add Codex, with its own sandbox off (see `agents add codex`).")] = False,
 ) -> None:
     """Create a starter policy (userns sandbox, a pytest profile, and the coding-agent CLIs found on PATH)."""
     from multigenz.config import config_policy_path
@@ -85,15 +83,11 @@ def init(
     path = policy or config_policy_path()
     keys = agent if agent else detect_agents()
     try:
-        added = init_policy(path, agents=keys, overwrite=overwrite, trust_outer_sandbox=trust_outer_sandbox)
+        added = init_policy(path, agents=keys, overwrite=overwrite)
     except (FileExistsError, ValueError, MultiGenzError) as exc:
         raise _fail(str(exc), 2) from exc
     typer.echo(f"wrote {path}")
     typer.echo(f"agents: {', '.join(added) if added else '(none found on PATH; add one with `multigenz agents add`)'}")
-    skipped = [k for k in keys if k not in added]
-    if skipped:
-        typer.secho(f"skipped: {', '.join(skipped)} (Codex needs --trust-outer-sandbox; see `multigenz agents presets`)",
-                    fg=typer.colors.YELLOW)
     typer.echo("next: edit the `tests` profile for your project, then run `multigenz doctor`")
 
 
@@ -145,8 +139,6 @@ def agents_add(
     policy: PolicyOpt = None,
     name: Annotated[Optional[str], typer.Option("--name", help="Policy key (default: the preset's).")] = None,
     command: Annotated[Optional[str], typer.Option("--command", help="Binary path or name (default: the preset's).")] = None,
-    trust_outer_sandbox: Annotated[bool, typer.Option(
-        "--trust-outer-sandbox", help="Codex only: run Codex with its own sandbox off, confined by MultiGenz's.")] = False,
 ) -> None:
     """Add a preset agent to the policy file (backup kept; validated before it is kept)."""
     from multigenz.config import config_policy_path
@@ -154,8 +146,8 @@ def agents_add(
 
     path = policy or config_policy_path()
     try:
-        backup = add_preset(path, preset, name=name, command=command, trust_outer_sandbox=trust_outer_sandbox)
-    except (ValueError, PermissionError, FileNotFoundError, MultiGenzError) as exc:
+        backup = add_preset(path, preset, name=name, command=command)
+    except (ValueError, FileNotFoundError, MultiGenzError) as exc:
         raise _fail(str(exc), 2) from exc
     p = PRESETS[preset]
     typer.echo(f"added agents.{name or p.agent} ({p.status}) to {path}; backup at {backup}")

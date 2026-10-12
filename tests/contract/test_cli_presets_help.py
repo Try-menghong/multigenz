@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from multigenz.adapters.cline import ClineAdapter
-from multigenz.adapters.codex import OUTER_SANDBOX_INVOCATIONS
+from multigenz.adapters.codex import CodexAdapter
 from multigenz.adapters.antigravity import EXPERIMENTAL_INVOCATIONS
 from multigenz.adapters.opencode import OpencodeAdapter
 from multigenz.config import InvocationCfg
@@ -19,7 +19,7 @@ HELP = Path(__file__).parent / "fixtures" / "help"
 CASES = [
     ("cline-3.0.70.txt", ClineAdapter.BUILTIN_INVOCATIONS),
     ("opencode-1.19.0-run.txt", OpencodeAdapter.BUILTIN_INVOCATIONS),
-    ("codex-0.162.1-exec.txt", OUTER_SANDBOX_INVOCATIONS),
+    ("codex-0.162.1-exec.txt", CodexAdapter.BUILTIN_INVOCATIONS),
     ("agy-1.3.3.txt", EXPERIMENTAL_INVOCATIONS),
 ]
 
@@ -40,7 +40,11 @@ def test_every_preset_invocation_is_a_valid_invocation_config():
             InvocationCfg.model_validate(inv)
 
 
-def test_codex_read_and_write_modes_are_split():
-    modes = {m for inv in OUTER_SANDBOX_INVOCATIONS for m in inv.modes}
-    assert modes == {"code", "conflict", "plan", "review", "analysis"}
-    assert all("danger-full-access" in inv.argv for inv in OUTER_SANDBOX_INVOCATIONS)
+def test_codex_keeps_its_own_sandbox_and_read_roles_are_read_only():
+    by_name = {i.name: i for i in CodexAdapter.BUILTIN_INVOCATIONS}
+    assert "workspace-write" in by_name["exec-workspace-write"].argv
+    assert set(by_name["exec-workspace-write"].modes) == {"code", "conflict"}
+    assert "read-only" in by_name["exec-read-only"].argv
+    assert set(by_name["exec-read-only"].modes) == {"plan", "review", "analysis"}
+    assert not any("danger-full-access" in i.argv or "--dangerously-bypass-approvals-and-sandbox" in i.argv
+                   for i in CodexAdapter.BUILTIN_INVOCATIONS)

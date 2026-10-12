@@ -33,7 +33,7 @@ def test_agent_table_matches_the_presets():
     from multigenz.presets import PRESETS
     for p in PRESETS.values():
         assert f"multigenz agents add {p.key}" in HTML, p.key
-    assert "--trust-outer-sandbox" in HTML           # the Codex trade-off is stated, not hidden
+    assert "danger-full-access" not in HTML
 
 
 @pytest.fixture

@@ -105,6 +105,32 @@ def harden_proc(proc: str) -> None:
             mount("/dev/null", path, None, MS_BIND)
 
 
+CLONE_NEWUSER = 0x10000000
+
+
+def enter_agent_userns(uid: int) -> None:
+    """Make the agent an ordinary uid in a child user namespace (after all mounts, before capabilities are dropped).
+
+    The bootstrap needs uid 0 in the sandbox namespace to mount and pivot. The agent does not: as ``uid`` in a child
+    namespace whose only mapping is ``uid -> sandbox root`` it owns its workspace, tmpfs and home exactly as before,
+    holds no capability anywhere, and is in the same position as an ordinary unprivileged Linux user. That is also what
+    lets an agent's OWN sandbox (e.g. Codex's bubblewrap) work inside this one: since Linux 5.12 only a creator holding
+    CAP_SETFCAP may map uid 0 into a new user namespace, so a capability-less uid 0 cannot, while uid ``uid`` can map
+    itself without any privilege.
+    """
+    if libc.unshare(CLONE_NEWUSER) != 0:
+        die(f"cannot create the agent user namespace: {os.strerror(ctypes.get_errno())}")
+    for name, data in (("setgroups", "deny"), ("uid_map", f"{uid} 0 1\n"), ("gid_map", f"{uid} 0 1\n")):
+        try:
+            fd = os.open(f"/proc/self/{name}", os.O_WRONLY)
+            try:
+                os.write(fd, data.encode())
+            finally:
+                os.close(fd)
+        except OSError as exc:
+            die(f"cannot write /proc/self/{name} for the agent user namespace: {exc}")
+
+
 def drop_privileges() -> None:
     try:
         last = int(open("/proc/sys/kernel/cap_last_cap").read().strip())
@@ -218,6 +244,8 @@ def main() -> None:
         res = getattr(resource, name)
         resource.setrlimit(res, (value, value))
 
+    if spec.get("agent_uid") is not None:
+        enter_agent_userns(int(spec["agent_uid"]))
     drop_privileges()
     os.chdir(spec.get("cwd", "/"))
     env = spec.get("env", {})

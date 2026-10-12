@@ -23,18 +23,16 @@ unsandboxed regardless).
 | `claude` | `--print --permission-mode acceptEdits` / `plan` | real model runs |
 | `opencode` | `run --auto` (code) / `run --agent plan` (read-only roles) | real binary + local scripted model, in the sandbox |
 | `cline` | `--yolo` (code) / `--plan` (read-only roles) | real binary + local scripted model, in the sandbox |
-| `codex` | none: written only by `multigenz agents add codex --trust-outer-sandbox` | help text only |
+| `codex` | `exec --sandbox workspace-write` (code) / `exec --sandbox read-only` (read-only roles) | real binary + local scripted model, in the sandbox |
 | `antigravity` / `agy` | none: `multigenz agents add agy` writes experimental candidates | help text only |
 
 All of them read the prompt on stdin. The easy way to configure them is `multigenz init` (all supported CLIs found on
 PATH) or `multigenz agents add <preset>`; both validate the result with the real policy loader and keep a `.bak` copy.
 `multigenz agents presets` shows each preset's test status and install hint.
 
-**Codex.** `codex exec` works unattended, but Codex's own sandbox needs bubblewrap to create a nested user namespace,
-which fails inside MultiGenz's sandbox (`bwrap: setting up uid map: Operation not permitted`; the legacy Landlock mode
-also requires bubblewrap in Codex 0.162). Every shell command Codex runs then fails, so inside MultiGenz Codex can only
-work with its inner sandbox off (`--sandbox danger-full-access`), confined by the MultiGenz sandbox alone. That is your
-decision: `multigenz agents add codex --trust-outer-sandbox`. This path has not been executed in development.
+**Codex** keeps its own sandbox inside MultiGenz's. That works because MultiGenz runs every agent as an ordinary uid
+(1000) in a child user namespace: since Linux 5.12 a process may map uid 0 into a new user namespace only if it held
+CAP_SETFCAP, so a capability-less uid 0 could not start Codex's bubblewrap, while uid 1000 can map itself.
 
 **Logins.** Presets hand an agent its own login by name: environment variables (`credentials.env`) and files mounted
 **read-only** at the same path under the sandbox home (`credentials.files`, e.g. `~/.codex/auth.json` →

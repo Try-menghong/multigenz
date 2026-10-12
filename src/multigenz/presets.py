@@ -38,7 +38,6 @@ class Preset:
     env: list[str] = field(default_factory=list)
     files: list[str] = field(default_factory=list)  # paths under ~ mounted read-only at the same place in the sandbox
     invocations: list[dict] | None = None           # None: use the adapter's verified built-ins
-    requires_flag: str | None = None                # opt-in flag the admin must pass
     install_hint: str = ""
 
 
@@ -65,11 +64,6 @@ def _dump(invs) -> list[dict]:
     return [i.model_dump(exclude_defaults=True) | {"name": i.name, "argv": i.argv} for i in invs]
 
 
-def _codex_invocations() -> list[dict]:
-    from multigenz.adapters.codex import OUTER_SANDBOX_INVOCATIONS
-    return _dump(OUTER_SANDBOX_INVOCATIONS)
-
-
 def _agy_invocations() -> list[dict]:
     from multigenz.adapters.antigravity import EXPERIMENTAL_INVOCATIONS
     return _dump(EXPERIMENTAL_INVOCATIONS)
@@ -92,12 +86,10 @@ PRESETS: dict[str, Preset] = {p.key: p for p in [
            "Cline CLI (`cline --yolo`), any provider Cline is configured for",
            files=["~/.cline/data/settings/providers.json"],
            install_hint="npm i -g cline; then `cline auth`"),
-    Preset("codex", "codex", "codex", ["architecture", "coding", "testing", "review"], "help-verified",
-           "OpenAI Codex (`codex exec`). Codex's own sandbox cannot nest inside MultiGenz's, so it runs with "
-           "`--sandbox danger-full-access` confined only by the MultiGenz sandbox",
+    Preset("codex", "codex", "codex", ["architecture", "coding", "testing", "review"], "run-tested",
+           "OpenAI Codex (`codex exec`), keeping its own sandbox (workspace-write / read-only) inside MultiGenz's",
            env=["OPENAI_API_KEY", "CODEX_API_KEY"],
            files=["~/.codex/auth.json", "~/.codex/config.toml"],
-           invocations=None, requires_flag="trust_outer_sandbox",
            install_hint="npm i -g @openai/codex; then `codex login`"),
     Preset("agy", "antigravity", "agy", ["research", "architecture"], "experimental",
            "Google Antigravity (`agy --print`); candidate flags from `agy --help` 1.3.3, never run in development",
@@ -115,8 +107,6 @@ def _sandbox_dst(p: str) -> str:
 
 
 def preset_invocations(preset: Preset) -> list[dict] | None:
-    if preset.key == "codex":
-        return _codex_invocations()
     if preset.key == "agy":
         return _agy_invocations()
     return preset.invocations
@@ -171,18 +161,11 @@ def insert_agent(text: str, block: str, name: str) -> str:
     return "".join(lines)
 
 
-def add_preset(path: Path, key: str, *, name: str | None = None, command: str | None = None,
-               trust_outer_sandbox: bool = False) -> str:
+def add_preset(path: Path, key: str, *, name: str | None = None, command: str | None = None) -> str:
     """Add a preset to a policy file: backup, edit, validate with the real loader, restore on failure."""
     if key not in PRESETS:
         raise ValueError(f"unknown preset {key!r}; choose from {', '.join(PRESETS)}")
     preset = PRESETS[key]
-    if preset.requires_flag == "trust_outer_sandbox" and not trust_outer_sandbox:
-        raise PermissionError(
-            "Codex's own sandbox cannot run nested inside MultiGenz's sandbox (bubblewrap cannot set up its user "
-            "namespace there), so inside MultiGenz Codex can only run with its inner sandbox turned off "
-            "(--sandbox danger-full-access), confined by the MultiGenz sandbox alone. If you accept that, re-run "
-            "with --trust-outer-sandbox.")
     if not path.is_file():
         raise FileNotFoundError(f"{path}: no policy file (create one with `multigenz init`)")
     original = path.read_text(encoding="utf-8")
@@ -199,7 +182,7 @@ def add_preset(path: Path, key: str, *, name: str | None = None, command: str | 
 
 
 def detect_agents(path_env: str | None = None) -> list[str]:
-    """Preset keys whose command is on PATH (agy/codex included; their opt-in rules still apply when added)."""
+    """Preset keys whose command is on PATH."""
     return [k for k, p in PRESETS.items() if shutil.which(p.command, path=path_env)]
 
 
@@ -239,8 +222,7 @@ validation:
 """
 
 
-def init_policy(path: Path, *, agents: list[str] | None = None, overwrite: bool = False,
-                trust_outer_sandbox: bool = False) -> list[str]:
+def init_policy(path: Path, *, agents: list[str] | None = None, overwrite: bool = False) -> list[str]:
     """Write a starter policy with the given (or detected) presets. Returns the agents added."""
     if path.exists() and not overwrite:
         raise FileExistsError(f"{path} already exists (use --overwrite to replace it; a .bak copy is kept)")
@@ -252,8 +234,6 @@ def init_policy(path: Path, *, agents: list[str] | None = None, overwrite: bool 
     text = policy_template()
     for k in keys:
         p = PRESETS[k]
-        if p.requires_flag == "trust_outer_sandbox" and not trust_outer_sandbox:
-            continue
         text = insert_agent(text, render_agent(p), p.agent)
         added.append(k)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)

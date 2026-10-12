@@ -6,8 +6,7 @@ instead of a real provider. `multigenz run` then has to plan, run the coding att
 administrator profile and integrate it. No account, API key or network beyond 127.0.0.1 is needed.
 
 Binaries are looked up on $MULTIGENZ_TEST_CLI_PATH (default: $PATH plus /opt/agentclis/bin); missing ones are skipped.
-Codex only runs with its inner sandbox off (see adapters/codex.py), so its test also needs
-MULTIGENZ_TEST_CODEX_OUTER_SANDBOX=1: running it is the administrator's decision, not the test suite's.
+Codex runs with its OWN sandbox (bubblewrap, workspace-write) nested inside MultiGenz's.
 """
 
 from __future__ import annotations
@@ -66,8 +65,6 @@ def provider_files(tmp_path: Path, base_url: str) -> dict[str, tuple[str, str]]:
 
 
 def write_policy(tmp_path: Path, agents: dict[str, list[str]], files, extra: dict | None = None) -> Path:
-    from multigenz.adapters.codex import OUTER_SANDBOX_INVOCATIONS
-
     pol = {
         "version": 1,
         "orchestrator": {"mode": "autonomous", "max_parallel_agents": 1, "max_task_attempts": 2,
@@ -84,7 +81,6 @@ def write_policy(tmp_path: Path, agents: dict[str, list[str]], files, extra: dic
                  "credentials": {"files": [{"src": src, "dst": dst}]}}
         if name == "codex":
             entry["credentials"]["env"] = ["MOCK_API_KEY"]
-            entry["invocations"] = [i.model_dump() for i in OUTER_SANDBOX_INVOCATIONS]
         pol["agents"][name] = entry | (extra or {}).get(name, {})
     path = tmp_path / "policy.yaml"
     path.write_text(json.dumps(pol))  # JSON is YAML
@@ -149,15 +145,19 @@ def test_different_clis_plan_and_code_in_one_run(tmp_path, mock):
     assert '"kind": "plan.accepted"' in events and '"agent": "cline"' in events
 
 
-@pytest.mark.skipif(os.environ.get("MULTIGENZ_TEST_CODEX_OUTER_SANDBOX") != "1",
-                    reason="Codex runs with its inner sandbox off; opt in with MULTIGENZ_TEST_CODEX_OUTER_SANDBOX=1")
-def test_codex_plans_codes_and_integrates(tmp_path, mock):
+def test_codex_plans_codes_and_integrates_with_its_own_sandbox(tmp_path, mock):
+    """Codex plans (exec --sandbox read-only) and codes (exec --sandbox workspace-write), its bubblewrap nested inside
+    the MultiGenz sandbox; its shell command must really succeed (exit 0), not merely be attempted."""
     if not which("codex"):
         pytest.skip("codex not installed")
-    base_url, _ = mock
+    base_url, log = mock
     files = provider_files(tmp_path, base_url)
     policy = write_policy(tmp_path, {"codex": ["architecture", "coding"]}, files)
     repo = make_repo(tmp_path)
     r = run_mg(tmp_path, policy, repo, "run", f"Create the file {mock_llm.FILE_NAME}", "--repo", str(repo),
                env={"MOCK_API_KEY": "dummy"})
     assert_integrated(tmp_path, policy, repo, r.stdout, "codex")
+    outputs = [i.get("output", "") for row in map(json.loads, log.read_text().splitlines())
+               for i in row["body"].get("input", []) if isinstance(i, dict) and i.get("type") == "function_call_output"]
+    assert outputs and all("exited with code 0" in o for o in outputs), outputs
+    assert not any("bwrap" in o for o in outputs)

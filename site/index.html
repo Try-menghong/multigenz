@@ -241,12 +241,12 @@ run ef8faadd4d97: <span class="t-ok">SUCCEEDED</span>
             <tr><td>Claude Code</td><td><code>claude --print</code></td><td><span class="pill ok">real model runs</span></td><td><code>multigenz agents add claude</code></td></tr>
             <tr><td>opencode</td><td><code>opencode run --auto</code></td><td><span class="pill ok">end to end, local test model</span></td><td><code>multigenz agents add opencode</code></td></tr>
             <tr><td>Cline</td><td><code>cline --yolo</code></td><td><span class="pill ok">end to end, local test model</span></td><td><code>multigenz agents add cline</code></td></tr>
-            <tr><td>OpenAI Codex</td><td><code>codex exec</code></td><td><span class="pill warn">opt-in: its own sandbox off</span></td><td><code>multigenz agents add codex --trust-outer-sandbox</code></td></tr>
+            <tr><td>OpenAI Codex</td><td><code>codex exec</code></td><td><span class="pill ok">end to end, local test model</span></td><td><code>multigenz agents add codex</code></td></tr>
             <tr><td>Google Antigravity</td><td><code>agy --print</code></td><td><span class="pill muted">experimental</span></td><td><code>multigenz agents add agy</code></td></tr>
           </tbody>
         </table>
       </div>
-      <p class="caption">“Local test model” means the real CLI ran inside the MultiGenz sandbox against a scripted model server, through planning, coding, validation and integration. Codex's own sandbox cannot start inside MultiGenz's, so Codex only runs if you accept relying on the MultiGenz sandbox alone.</p>
+      <p class="caption">“Local test model” means the real CLI ran inside the MultiGenz sandbox against a scripted model server, through planning, coding, validation and integration. Codex keeps its own sandbox, nested inside MultiGenz's.</p>
     </section>
 
     <section id="safety" aria-labelledby="safety-h">

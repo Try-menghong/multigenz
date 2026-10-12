@@ -31,6 +31,7 @@ SANDBOX_PATH = "/usr/local/bin:/usr/bin:/bin"
 WORKSPACE = "/workspace"
 INBOX = "/mg/in"
 SANDBOX_HOME = "/home/agent"
+AGENT_UID = 1000  # the agent's uid inside its own child user namespace (see nsboot.enter_agent_userns)
 # Tools an agent runs inside its worktree (a test run) must not litter it with bytecode/caches: those would be
 # "unexpected paths" and cost a charged attempt. Overridable per agent through req.env.
 HYGIENE_ENV = {"PYTHONDONTWRITEBYTECODE": "1", "PYTEST_ADDOPTS": "-p no:cacheprovider"}
@@ -200,6 +201,7 @@ class UsernsBackend(SandboxBackend):
             "env": env,
             "rlimits": req.limits.rlimits(),
             "hostname": "mg-sandbox",
+            "agent_uid": AGENT_UID,
             "loopback": req.network == "none",
         }
 

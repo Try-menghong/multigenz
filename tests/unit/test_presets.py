@@ -23,7 +23,7 @@ def fake_bin(d, name):
     return p
 
 
-def test_init_writes_a_valid_policy_with_detected_agents_and_skips_codex(tmp_path):
+def test_init_writes_a_valid_policy_with_the_detected_agents(tmp_path):
     bins = tmp_path / "bin"
     bins.mkdir()
     for n in ("opencode", "cline", "codex"):
@@ -32,27 +32,25 @@ def test_init_writes_a_valid_policy_with_detected_agents_and_skips_codex(tmp_pat
     r = cli("init", "--policy", str(pol), env={"PATH": f"{bins}:/usr/bin:/bin"})
     assert r.returncode == 0, r.stdout + r.stderr
     p = load_policy(pol)
-    assert set(p.agents) == {"opencode", "cline"} and p.execution.isolation == "userns"
-    assert "skipped: codex" in r.stdout
+    assert set(p.agents) == {"opencode", "cline", "codex"} and p.execution.isolation == "userns"
     assert oct(pol.parent.stat().st_mode & 0o777) == "0o700"
     assert cli("init", "--policy", str(pol)).returncode == 2           # never overwrites silently
-    r = cli("init", "--policy", str(pol), "--overwrite", "-a", "claude", "-a", "codex", "--trust-outer-sandbox")
+    r = cli("init", "--policy", str(pol), "--overwrite", "-a", "claude", "-a", "codex")
     assert r.returncode == 0, r.stderr
     assert set(load_policy(pol).agents) == {"claude", "codex"} and (tmp_path / "cfg" / "policy.yaml.bak").exists()
 
 
-def test_agents_add_cli_validates_refuses_codex_without_opt_in_and_duplicates(tmp_path):
+def test_agents_add_cli_validates_and_refuses_duplicates(tmp_path):
     pol = tmp_path / "p.yaml"
     init_policy(pol, agents=[])
     assert load_policy(pol).agents == {}
-    r = cli("agents", "add", "codex", "--policy", str(pol))
-    assert r.returncode == 2 and "--trust-outer-sandbox" in r.stderr and load_policy(pol).agents == {}
-    assert cli("agents", "add", "codex", "--policy", str(pol), "--trust-outer-sandbox").returncode == 0
+    assert cli("agents", "add", "codex", "--policy", str(pol)).returncode == 0
     assert cli("agents", "add", "opencode", "--policy", str(pol), "--name", "oc2", "--command", "/x/opencode").returncode == 0
     dup = cli("agents", "add", "opencode", "--policy", str(pol), "--name", "oc2")
     assert dup.returncode == 2 and "already exists" in dup.stderr
     p = load_policy(pol)
-    assert [i.name for i in p.agents["codex"].invocations] == ["exec-outer-sandbox", "exec-outer-sandbox-read"]
+    assert p.agents["codex"].invocations == []                               # Codex's verified built-ins are used
+    assert p.agents["codex"].credentials.files[0].dst == "/home/agent/.codex/auth.json"
     assert p.agents["oc2"].command == "/x/opencode" and p.agents["oc2"].invocations == []
     assert cli_class("oc2", "/x/opencode") is OpencodeAdapter                # built-ins chosen by command name
     assert cli("agents", "add", "nope", "--policy", str(pol)).returncode == 2
