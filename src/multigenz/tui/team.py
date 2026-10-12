@@ -85,6 +85,7 @@ class TeamScreen(Screen):
         Binding("e", "enable", "Enable/disable"),
         Binding("p", "planning", "Planning mode"),
         Binding("a", "add", "Add agent"),
+        Binding("m", "providers", "API models"),
         Binding("s", "save", "Save"),
         Binding("escape", "back", "Back"),
     ]
@@ -115,7 +116,7 @@ class TeamScreen(Screen):
         t.focus()
 
     # -- data ---------------------------------------------------------------------------------------------------
-    def load(self) -> None:
+    def load(self, probe: bool = True) -> None:
         intro = self.query_one("#team-intro", Static)
         if not self.policy_path.is_file():
             self.pol = None
@@ -133,9 +134,11 @@ class TeamScreen(Screen):
         self.planning = self.pol.orchestrator.planning
         self.dirty = False
         intro.update(f"{self.policy_path}  -  space: add/remove the agent in that role   [ ]: reorder   "
-                     "c: role back to automatic   e: enable/disable   p: planning mode   a: add agent   s: save")
+                     "c: role back to automatic   e: enable/disable   p: planning mode   a: add agent   "
+                     "m: API providers/models   s: save")
         self.redraw()
-        self.run_worker(self.probe_all(), exclusive=True, group="probe")
+        if probe:
+            self.run_worker(self.probe_all, exclusive=True, group="probe")
 
     async def probe_all(self) -> None:
         from multigenz.adapters.registry import build_adapters
@@ -189,6 +192,8 @@ class TeamScreen(Screen):
                 status = (p.version or "ok")[:40]
             else:
                 status = (p.reason or "unavailable")[:60]
+            if cfg.provider:
+                status = f"{cfg.provider}: {cfg.model}" + ("" if p is None or p.enabled else f" - {status}")
             t.add_row(n, "yes" if self.enabled.get(n, True) else "no",
                       *(self.cell(n, r, eff) for r in ROLE_NAMES), status, key=n)
         if t.row_count:
@@ -351,6 +356,24 @@ class TeamScreen(Screen):
             self.load()
 
         self.app.push_screen(AddAgentScreen(choices), done)
+
+    def action_providers(self) -> None:
+        from multigenz.tui.providers import ProvidersScreen
+
+        if self.pol is None:
+            self.set_status("no valid policy file: run `multigenz init` first")
+            return
+        if self.dirty:
+            self.set_status("save (s) or undo your changes before adding API providers")
+            return
+        self.app.push_screen(ProvidersScreen(self.policy_path))
+
+    def on_screen_resume(self) -> None:
+        if not self.dirty and self.pol is not None:
+            before = set(self.pol.agents)
+            self.load(probe=False)  # agents may have been added from the Providers screen
+            if self.pol is not None and set(self.pol.agents) != before:
+                self.run_worker(self.probe_all, exclusive=True, group="probe")
 
     def action_back(self) -> None:
         from multigenz.tui.app import ConfirmScreen

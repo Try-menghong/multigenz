@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import uuid
@@ -113,9 +114,26 @@ class ExecutionRunner:
         finally:
             wrapped.cleanup()
 
+    def harness_files(self, agent: str, ctx: ExecutionContext) -> list[tuple[str, str]]:
+        """For an agent that uses an API provider: the coding harness's config, generated for this attempt only."""
+        from multigenz.providers import opencode_config
+
+        cfg = self.policy.agents.get(agent)
+        if cfg is None or cfg.provider is None or cfg.adapter != "cli":
+            return []
+        prov = self.policy.providers[cfg.provider]
+        d = ctx.log_dir.parent / "harness"
+        d.mkdir(parents=True, exist_ok=True, mode=0o700)
+        f = d / "opencode.json"
+        fd = os.open(f, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:  # the key is referenced as {env:NAME}, never written
+            json.dump(opencode_config(cfg.provider, prov, cfg.model or ""), fh, indent=2)
+        return [(str(f), "/home/agent/.config/opencode/opencode.json")]
+
     async def run_command(self, cmd: AdapterCommand, ctx: ExecutionContext) -> AsyncIterator[ProcessEvent]:
         env = dict(cmd.env)
         cred_env, cred_files = self.resolve_credentials(cmd.agent, ctx.credential_refs)
+        cred_files = [*cred_files, *self.harness_files(cmd.agent, ctx)]
         env.update(cred_env)
         async for ev in self.run_sandboxed(
             argv=cmd.argv, workspace=ctx.worktree, state_dir=ctx.log_dir.parent / "sandbox",

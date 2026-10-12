@@ -24,6 +24,9 @@ app.add_typer(runs_app, name="runs")
 roles_app = typer.Typer(help="Choose which agent plans, which ones code, review and resolve conflicts.",
                         invoke_without_command=True)
 app.add_typer(roles_app, name="roles")
+providers_app = typer.Typer(help="API providers (OpenRouter, OpenAI, DeepSeek, Ollama, ...): add one, list its models, "
+                                 "make an agent from a model.", no_args_is_help=True)
+app.add_typer(providers_app, name="providers")
 
 PolicyOpt = Annotated[Optional[Path], typer.Option("--policy", "-p", help="Policy YAML (default: $MULTIGENZ_POLICY, "
                                                    "~/.config/multigenz/policy.yaml, then built-in defaults).")]
@@ -280,6 +283,124 @@ def roles_clear(
     pol = _load(path)
     roles = {r: [] if role in (r, "all") else list(getattr(pol.roles, r)) for r in ROLE_NAMES}
     _show_roles(_save(path, roles=roles))
+
+
+@providers_app.command("presets")
+def providers_presets() -> None:
+    """Known provider endpoints you can add by name."""
+    from multigenz.providers import PRESETS
+
+    for p in PRESETS.values():
+        typer.echo(f"{p.key:<11} {p.label:<26} {p.base_url or '(you give the URL)':<56} {p.api_key_env or '(no key)'}")
+
+
+@providers_app.command("list")
+def providers_list(policy: PolicyOpt = None) -> None:
+    """Providers in the policy, whether their key is available, and the agents using them."""
+    from multigenz.providers import key_for
+
+    pol = _load(policy)
+    if not pol.providers:
+        typer.echo("no providers yet: multigenz providers add <preset>   (see: multigenz providers presets)")
+    for name, prov in pol.providers.items():
+        key = "no key needed" if not prov.api_key_env else (
+            f"key {prov.api_key_env}: {'set' if key_for(prov) else 'MISSING'}")
+        users = [f"{a} ({c.model})" for a, c in pol.agents.items() if c.provider == name]
+        typer.echo(f"{name:<12} {prov.kind:<18} {prov.base_url}  [{key}]")
+        typer.echo(f"{'':<12} agents: {', '.join(users) or '-'}")
+
+
+@providers_app.command("add")
+def providers_add(
+    preset: Annotated[str, typer.Argument(help="openrouter, openai, anthropic, deepseek, groq, ollama, custom, ...")],
+    name: Annotated[Optional[str], typer.Option("--name", help="Provider name in the policy (default: the preset).")] = None,
+    base_url: Annotated[Optional[str], typer.Option("--base-url", help="Endpoint (required for custom).")] = None,
+    key_env: Annotated[Optional[str], typer.Option("--key-env", help="Environment variable holding the key.")] = None,
+    key_stdin: Annotated[bool, typer.Option("--key-stdin", help="Read the API key from stdin and store it.")] = False,
+    no_key: Annotated[bool, typer.Option("--no-key", help="The endpoint needs no key (local servers).")] = False,
+    policy: PolicyOpt = None,
+) -> None:
+    """Add an API provider. The key is stored in ~/.config/multigenz/secrets.env (0600), never in the policy."""
+    import getpass
+
+    from multigenz.policy_edit import add_provider, short_error
+    from multigenz.providers import PRESETS, ProviderError, set_secret
+
+    if preset not in PRESETS:
+        raise _fail(f"unknown preset {preset!r}; see `multigenz providers presets`", 2)
+    pr = PRESETS[preset]
+    url = base_url or pr.base_url
+    if not url:
+        raise _fail("--base-url is required for a custom provider", 2)
+    pname = name or preset
+    env_name = None if no_key else (key_env or pr.api_key_env or f"{pname.upper().replace('-', '_')}_API_KEY")
+    path = _policy_file(policy)
+    try:
+        add_provider(path, pname, kind=pr.kind, base_url=url, api_key_env=env_name)
+    except (MultiGenzError, FileNotFoundError) as exc:
+        raise _fail(f"not added: {short_error(exc)}", 2) from exc
+    typer.echo(f"added provider {pname} ({url}) to {path}")
+    if env_name and (key_stdin or sys.stdin.isatty()):
+        key = sys.stdin.readline().strip() if key_stdin else getpass.getpass(f"{env_name} (input hidden, Enter to skip): ")
+        if key:
+            try:
+                where = set_secret(env_name, key)
+            except ProviderError as exc:
+                raise _fail(str(exc), 2) from exc
+            typer.echo(f"stored {env_name} in {where} (mode 0600)")
+    typer.echo(f"next: multigenz providers models {pname}")
+
+
+@providers_app.command("models")
+def providers_models(
+    name: str,
+    search: Annotated[Optional[str], typer.Option("--search", "-s", help="Only ids containing this text.")] = None,
+    policy: PolicyOpt = None,
+) -> None:
+    """Fetch the model ids a provider serves (GET <base_url>/models with its key)."""
+    from multigenz.providers import ProviderError, fetch_models, key_for
+
+    pol = _load(policy)
+    prov = pol.providers.get(name)
+    if prov is None:
+        raise _fail(f"no provider {name!r} in the policy (multigenz providers list)", 2)
+    if prov.api_key_env and not key_for(prov):
+        raise _fail(f"no API key: set {prov.api_key_env} (or re-run `multigenz providers add` to store it)", 2)
+    try:
+        ids = fetch_models(prov, key_for(prov))
+    except ProviderError as exc:
+        raise _fail(str(exc), 1) from exc
+    shown = [i for i in ids if not search or search.lower() in i.lower()]
+    for i in shown:
+        typer.echo(i)
+    typer.secho(f"{len(shown)} of {len(ids)} models. Use one: multigenz providers use {name} <model-id>",
+                fg=typer.colors.BLUE, err=True)
+
+
+@providers_app.command("use")
+def providers_use(
+    name: str,
+    model: str,
+    as_: Annotated[str, typer.Option("--as", help="coder: a coding agent (opencode harness); text: planner/reviewer "
+                                                  "only (direct API call).")] = "coder",
+    agent: Annotated[Optional[str], typer.Option("--agent", help="Agent name (default: derived).")] = None,
+    policy: PolicyOpt = None,
+) -> None:
+    """Make an agent from a provider's model. Give it a role with `multigenz roles` or the TUI Team screen."""
+    from multigenz.policy_edit import add_provider_agent, agent_name_for, short_error
+
+    path = _policy_file(policy)
+    pol = _load(path)
+    if name not in pol.providers:
+        raise _fail(f"no provider {name!r} in the policy (multigenz providers list)", 2)
+    agent_name = agent or agent_name_for(name, model, set(pol.agents))
+    try:
+        add_provider_agent(path, agent_name, provider=name, model=model, use=as_)
+    except (MultiGenzError, FileNotFoundError) as exc:
+        raise _fail(f"not added: {short_error(exc)}", 2) from exc
+    typer.echo(f"added agent {agent_name}: {name} model {model} "
+               f"({'coding agent via opencode' if as_ == 'coder' else 'text only: planner/reviewer'})")
+    typer.echo("next: multigenz agents list, then give it a role (multigenz roles set worker ...) or use the TUI")
 
 
 @agents_app.command("run")

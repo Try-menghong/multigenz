@@ -37,11 +37,13 @@ def cli_class(name: str, command: str | None) -> type[CliAdapter]:
 
 
 def build_adapters(policy: Policy, *,
-                   litellm_completion: Callable[..., Awaitable[Any]] | None = None) -> dict[str, AgentAdapter]:
+                   litellm_completion: Callable[..., Awaitable[Any]] | None = None,
+                   environ: dict[str, str] | None = None) -> dict[str, AgentAdapter]:
     out: dict[str, AgentAdapter] = {}
     for name, cfg in policy.agents.items():
         if cfg.adapter == "litellm":
-            out[name] = LiteLLMAdapter(name, cfg, completion=litellm_completion)
+            prov = policy.providers.get(cfg.provider) if cfg.provider else None
+            out[name] = LiteLLMAdapter(name, cfg, completion=litellm_completion, provider=prov, environ=environ)
         else:
             out[name] = cli_class(name, cfg.command)(name, cfg)
     return out

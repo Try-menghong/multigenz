@@ -163,3 +163,104 @@ def save_policy_edits(path: Path, *, roles: dict[str, list[str]] | None = None,
     else:
         tmp.unlink()
     return pol, backup
+
+
+# -- API providers ------------------------------------------------------------------------------------------------------
+def insert_top_entry(text: str, top_key: str, name: str, block: str, before: str = "agents") -> str:
+    """Add ``name`` (a 2-space-indented ``block``) to the top-level mapping ``top_key``, creating it if needed."""
+    lines = text.splitlines(keepends=True)
+    if lines and not lines[-1].endswith("\n"):
+        lines[-1] += "\n"
+    found = _top_level_block(lines, top_key)
+    if found:
+        start, end = found
+        if any(re.match(rf"^\s+{re.escape(name)}\s*:", ln) for ln in lines[start + 1:end]):
+            raise ConfigError(f"{top_key}.{name} already exists")
+        if re.match(rf"^{re.escape(top_key)}\s*:\s*\{{\}}", lines[start]):
+            lines[start] = f"{top_key}:\n"
+        lines[end:end] = block.splitlines(keepends=True)
+        return "".join(lines)
+    anchor = _top_level_block(lines, before)
+    at = anchor[0] if anchor else len(lines)
+    lines[at:at] = [f"{top_key}:\n", *block.splitlines(keepends=True)]
+    return "".join(lines)
+
+
+def render_provider(name: str, kind: str, base_url: str, api_key_env: str | None) -> str:
+    out = [f"  {name}:", f"    kind: {json.dumps(kind)}", f"    base_url: {json.dumps(base_url)}"]
+    out.append(f"    api_key_env: {json.dumps(api_key_env)}" if api_key_env else
+               "    api_key_env: null   # no key needed (local server)")
+    return "\n".join(out) + "\n"
+
+
+def render_provider_agent(agent: str, provider: str, model: str, use: str, capabilities: list[str]) -> str:
+    if use == "coder":
+        head = ["    adapter: cli", '    command: "opencode"   # the coding harness that talks to the API']
+    else:
+        head = ["    adapter: litellm      # text only: may plan or review, cannot change files"]
+    out = [f"  {agent}:", f"    # {provider} model {model} ({'coding agent via opencode' if use == 'coder' else 'text only'})",
+           "    enabled: true", *head, f"    provider: {json.dumps(provider)}", f"    model: {json.dumps(model)}",
+           f"    capabilities: {json.dumps(capabilities)}"]
+    return "\n".join(out) + "\n"
+
+
+def _save_text(path: Path, text: str, check) -> tuple[Policy, Path]:
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    try:
+        pol = load_policy(tmp)
+        check(pol)
+    except Exception:
+        tmp.unlink()
+        raise
+    backup = path.with_name(path.name + ".bak")
+    shutil.copy(path, backup)
+    os.replace(tmp, path)
+    return pol, backup
+
+
+def add_provider(path: Path, name: str, *, kind: str, base_url: str, api_key_env: str | None) -> tuple[Policy, Path]:
+    path = Path(path).expanduser()
+    if not path.is_file():
+        raise FileNotFoundError(f"{path}: no policy file (create one with `multigenz init`)")
+    text = insert_top_entry(path.read_text(encoding="utf-8"), "providers", name,
+                            render_provider(name, kind, base_url, api_key_env))
+
+    def check(pol: Policy) -> None:
+        if name not in pol.providers:
+            raise ConfigError(f"could not add providers.{name}")
+    return _save_text(path, text, check)
+
+
+def add_provider_agent(path: Path, agent: str, *, provider: str, model: str, use: str = "coder",
+                       capabilities: list[str] | None = None) -> tuple[Policy, Path]:
+    """Add an agent that uses ``provider``'s ``model``: a coding agent (opencode harness) or text only (LiteLLM)."""
+    from multigenz.presets import insert_agent
+
+    if use not in ("coder", "text"):
+        raise ConfigError("use must be 'coder' or 'text'")
+    caps = capabilities or (["architecture", "coding", "testing", "review"] if use == "coder"
+                            else ["architecture", "review"])
+    path = Path(path).expanduser()
+    if not path.is_file():
+        raise FileNotFoundError(f"{path}: no policy file (create one with `multigenz init`)")
+    text = insert_agent(path.read_text(encoding="utf-8"), render_provider_agent(agent, provider, model, use, caps),
+                        agent)
+
+    def check(pol: Policy) -> None:
+        a = pol.agents.get(agent)
+        if a is None or a.provider != provider or a.model != model:
+            raise ConfigError(f"could not add agents.{agent}")
+    return _save_text(path, text, check)
+
+
+def agent_name_for(provider: str, model: str, taken: set[str]) -> str:
+    """A valid, unused agent name such as ``openrouter-qwen3-coder``."""
+    base = re.sub(r"[^a-z0-9_-]+", "-", f"{provider}-{model.split('/')[-1]}".lower()).strip("-_")[:28] or provider
+    if not re.match(r"^[a-z]", base):
+        base = "m-" + base
+    name, n = base, 2
+    while name in taken:
+        name = f"{base[:25]}-{n}"
+        n += 1
+    return name

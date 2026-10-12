@@ -28,9 +28,11 @@ class LiteLLMAdapter(AgentAdapter):
     provider_class = "api"
 
     def __init__(self, name: str, cfg: AgentCfg,
-                 completion: Callable[..., Awaitable[Any]] | None = None):
+                 completion: Callable[..., Awaitable[Any]] | None = None, provider=None, environ=None):
         self.name = name
         self.cfg = cfg
+        self.provider = provider  # ProviderCfg when the agent uses an API provider from `providers:`
+        self._environ = environ
         self.capabilities = frozenset(cfg.capabilities)
         self._completion = completion
         self._results: dict[str, AgentResult] = {}
@@ -50,7 +52,12 @@ class LiteLLMAdapter(AgentAdapter):
         if self._completion is None and importlib.util.find_spec("litellm") is None:
             return AdapterProbe(name=self.name, enabled=False, reason="litellm is not installed")
         warnings: list[str] = []
-        if self._completion is None:
+        if self.provider is not None:
+            if self.provider.api_key_env and not self._key():
+                return AdapterProbe(name=self.name, enabled=False,
+                                    reason=f"no API key: set {self.provider.api_key_env} or add it with "
+                                           "`multigenz providers add` / the TUI")
+        elif self._completion is None:
             try:
                 import litellm
 
@@ -60,8 +67,30 @@ class LiteLLMAdapter(AgentAdapter):
                                         reason=f"missing credentials in host environment: {v['missing_keys']}")
             except Exception as exc:  # noqa: BLE001
                 warnings.append(f"could not validate environment: {exc}")
-        return AdapterProbe(name=self.name, enabled=True, invocation=f"litellm:{self.cfg.model}",
+        return AdapterProbe(name=self.name, enabled=True, invocation=f"litellm:{self._model()}",
                             capabilities=sorted(self.capabilities), modes=sorted(READ_MODES), warnings=warnings)
+
+    def _key(self) -> str | None:
+        from multigenz.providers import key_for
+
+        return key_for(self.provider, self._environ) if self.provider is not None else None
+
+    def _model(self) -> str:
+        from multigenz.providers import litellm_model
+
+        assert self.cfg.model
+        return litellm_model(self.provider, self.cfg.model) if self.provider is not None else self.cfg.model
+
+    def _call_kwargs(self) -> dict:
+        if self.provider is None:
+            return {}
+        kw: dict = {"api_base": self.provider.base_url}
+        key = self._key()
+        if key:
+            kw["api_key"] = key
+        elif not self.provider.api_key_env:
+            kw["api_key"] = "not-needed"  # local servers ignore it; client libraries insist on one
+        return kw
 
     async def healthcheck(self) -> bool:
         return (await self.probe()).enabled
@@ -83,7 +112,7 @@ class LiteLLMAdapter(AgentAdapter):
             yield ev("error", f"LiteLLM worker cannot run mode {context.mode!r} (no filesystem access)")
             return
         prompt = render_prompt(task, context)
-        yield ev("started", f"litellm model={self.cfg.model}")
+        yield ev("started", f"litellm model={self._model()}")
         code: str | None = None
         text = ""
         cost: float | None = None
@@ -91,7 +120,8 @@ class LiteLLMAdapter(AgentAdapter):
             import asyncio
 
             resp = await asyncio.wait_for(
-                self._get_completion()(model=self.cfg.model, messages=[{"role": "user", "content": prompt}]),
+                self._get_completion()(model=self._model(), messages=[{"role": "user", "content": prompt}],
+                                       **self._call_kwargs()),
                 timeout=max(1.0, context.remaining_seconds))
             text = resp["choices"][0]["message"]["content"] or ""
             if isinstance(resp, dict) and resp.get("_multigenz_cost") is not None:

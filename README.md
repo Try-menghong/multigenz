@@ -48,6 +48,7 @@ GitHub Pages is enabled (Settings → Pages → Source: GitHub Actions) and the 
 | `cline` | `cline --yolo` / `cline --plan` | end to end in the sandbox against a local scripted model | uses `~/.cline/data/settings/providers.json` |
 | `codex` | `codex exec --sandbox workspace-write` / `read-only` | end to end in the sandbox against a local scripted model | keeps its own bubblewrap sandbox inside MultiGenz's; uses `~/.codex/auth.json` |
 | `hermes` | `hermes -z <prompt>` (one-shot) | end to end in the sandbox against a local scripted model | Hermes's own config, skills and plugins are mounted read-only |
+| API model | `opencode` with a generated provider config (coding) or a direct API call (text only) | end to end in the sandbox against a local provider that checks the key | any OpenAI-compatible provider, Anthropic, Ollama; `multigenz providers` or TUI Team → `m` |
 | `agy` | `agy --print --mode accept-edits` | experimental: flags from `agy --help`, never executed here | check with `multigenz agents run` first |
 
 Add one with `multigenz agents add <preset>`. Choose which agent plans (the orchestrating agent), which ones code,
@@ -65,6 +66,8 @@ multigenz agents presets | add P         supported agent CLIs; add one to the po
 multigenz agents enable | disable NAME   switch an agent on or off in the policy
 multigenz roles [set ROLE A B | clear R]  who plans (orchestrating agent), codes, reviews, resolves conflicts
 multigenz roles planning auto|always|never  auto: one agent takes the goal, subagents only when needed
+multigenz providers presets | add | list | models NAME | use NAME MODEL [--as coder|text]
+                                         API providers: store the key (0600), fetch model ids, make an agent
 multigenz agents list | run              inspect adapters; run ONE sandboxed agent -> validated commit
 multigenz plan "<goal>" [--out plan.json]   planner agent proposes a DAG; validated; nothing executed
 multigenz run "<goal>" --repo R [--planning auto|always|never] [--plan-file plan.json] [--detach]

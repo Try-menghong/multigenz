@@ -305,8 +305,14 @@ class RunsScreen(Screen):
 class MultiGenzApp(App):
     TITLE = "MultiGenz"
     CSS = """
-    #confirm, #new-run, #add-agent { width: 80%; height: auto; padding: 1 2; border: thick $accent; background: $surface; }
-    ConfirmScreen, NewRunScreen, AddAgentScreen { align: center middle; }
+    #confirm, #new-run, #add-agent, #add-provider { width: 80%; height: auto; padding: 1 2; border: thick $accent; background: $surface; }
+    ConfirmScreen, NewRunScreen, AddAgentScreen, AddProviderScreen { align: center middle; }
+    #prov-table { height: auto; max-height: 60%; }
+    #prov-intro, #mp-title { height: auto; padding: 0 1; color: $text-muted; }
+    #mp-models { height: 1fr; border: solid $primary; }
+    #mp-bottom { height: auto; }
+    #mp-bottom Input { width: 1fr; }
+    #mp-status, #prov-status { height: auto; padding: 0 1; color: $warning; }
     #presets { height: auto; max-height: 12; }
     #team-intro { height: auto; padding: 0 1; color: $text-muted; }
     #matrix { height: auto; max-height: 50%; }

@@ -30,6 +30,8 @@ from pathlib import Path
 FILE_NAME = os.environ.get("MOCK_FILE", "mock_output.txt")
 FILE_TEXT = os.environ.get("MOCK_TEXT", "written by the mock model")
 FINAL_TEXT = "Done: created " + FILE_NAME
+MODELS = ["mock-model", "mock-large", "mock-coder-small"]
+REQUIRED_KEY: str | None = None  # tests set this: every request must carry it (Bearer or x-api-key), else 401
 PLANNER_MARKER = "Produce a task DAG for the goal below"
 REVIEW_MARKER = 'Reply with ONE JSON object: {"approve"'
 REVIEW = {"approve": True, "issues": []}
@@ -186,7 +188,17 @@ class Handler(BaseHTTPRequestHandler):
     def _record(self, body: dict) -> None:
         if self.log_path:
             with self.lock, open(self.log_path, "a", encoding="utf-8") as fh:
-                fh.write(json.dumps({"path": self.path, "body": body}) + "\n")
+                fh.write(json.dumps({"path": self.path, "body": body,
+                                     "auth": self.headers.get("Authorization") or self.headers.get("x-api-key")}) + "\n")
+
+    def _authorized(self) -> bool:
+        if REQUIRED_KEY is None:
+            return True
+        got = self.headers.get("x-api-key") or (self.headers.get("Authorization") or "").removeprefix("Bearer ")
+        if got == REQUIRED_KEY:
+            return True
+        self._json(401, {"error": {"message": "invalid api key", "type": "authentication_error"}})
+        return False
 
     def _json(self, code: int, obj: dict) -> None:
         data = json.dumps(obj).encode()
@@ -210,7 +222,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # model listings some CLIs query
         if self.path.rstrip("/").endswith("/models"):
-            self._json(200, {"object": "list", "data": [{"id": "mock-model", "object": "model", "owned_by": "mock"}]})
+            self._record({})
+            if not self._authorized():
+                return
+            self._json(200, {"object": "list", "data": [{"id": m, "object": "model", "owned_by": "mock"}
+                                                        for m in MODELS]})
         else:
             self._json(404, {"error": {"message": "not found"}})
 
@@ -222,6 +238,8 @@ class Handler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             body = {"_raw": raw.decode(errors="replace")}
         self._record(body)
+        if not self._authorized():
+            return
         if self.path.rstrip("/").endswith("/chat/completions"):
             self._chat(body)
         elif self.path.rstrip("/").endswith("/responses"):

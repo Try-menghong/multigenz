@@ -95,11 +95,41 @@ class CredentialCfg(_Strict):
         return v
 
 
+PROVIDER_HARNESSES = ("opencode",)  # coding CLIs MultiGenz can point at an API provider
+
+
+class ProviderCfg(_Strict):
+    """An API provider: where models are served and which host environment variable holds its key.
+
+    The key itself is never part of the policy: it is read from the environment (or MultiGenz's 0600 secrets file,
+    ``~/.config/multigenz/secrets.env``), handed only to the agents that use this provider, and redacted.
+    """
+
+    kind: Literal["openai-compatible", "anthropic"] = "openai-compatible"
+    base_url: str
+    api_key_env: str | None = None  # None for local servers that need no key (Ollama, LM Studio)
+
+    @field_validator("base_url")
+    @classmethod
+    def _url(cls, v: str) -> str:
+        if not re.match(r"^https?://[^\s/]+", v or ""):
+            raise ValueError(f"base_url must be an http(s) URL, got {v!r}")
+        return v.rstrip("/")
+
+    @field_validator("api_key_env")
+    @classmethod
+    def _env(cls, v: str | None) -> str | None:
+        if v is not None and not ENV_NAME_RE.match(v):
+            raise ValueError(f"api_key_env must be an environment variable name, got {v!r}")
+        return v
+
+
 class AgentCfg(_Strict):
     enabled: bool = True
     adapter: Literal["cli", "litellm"]
     command: str | None = None
     model: str | None = None
+    provider: str | None = None  # an entry of `providers:`; with `model`, the API model this agent uses
     capabilities: list[str] = Field(default_factory=list)
     max_concurrent: int | None = Field(None, ge=1)
     invocations: list[InvocationCfg] = Field(default_factory=list)
@@ -116,6 +146,12 @@ class AgentCfg(_Strict):
             raise ValueError("cli adapter requires 'command'")
         if self.adapter == "litellm" and not self.model:
             raise ValueError("litellm adapter requires 'model'")
+        if self.provider is not None:
+            if not self.model:
+                raise ValueError("an agent with a provider needs a model")
+            if self.adapter == "cli" and os.path.basename(self.command or "") not in PROVIDER_HARNESSES:
+                raise ValueError(f"a cli agent with a provider must use one of {PROVIDER_HARNESSES} as its command "
+                                 "(the coding harness that talks to the API)")
         return self
 
 
@@ -283,6 +319,7 @@ class RolesCfg(_Strict):
 class Policy(_Strict):
     version: int = 1
     orchestrator: OrchestratorCfg = Field(default_factory=OrchestratorCfg)
+    providers: dict[str, ProviderCfg] = Field(default_factory=dict)
     agents: dict[str, AgentCfg] = Field(default_factory=dict)
     roles: RolesCfg = Field(default_factory=RolesCfg)
     execution: ExecutionCfg = Field(default_factory=ExecutionCfg)
@@ -304,6 +341,22 @@ class Policy(_Strict):
             if not NAME_RE.match(n):
                 raise ValueError(f"invalid agent name {n!r}")
         return v
+
+    @model_validator(mode="after")
+    def _providers(self) -> "Policy":
+        for n in self.providers:
+            if not NAME_RE.match(n):
+                raise ValueError(f"invalid provider name {n!r}")
+        for name, a in self.agents.items():
+            if a.provider is None:
+                continue
+            prov = self.providers.get(a.provider)
+            if prov is None:
+                raise ValueError(f"agents.{name}: unknown provider {a.provider!r} (not in providers)")
+            # the provider's key goes to this agent (and only this agent) without listing it twice
+            if a.adapter == "cli" and prov.api_key_env and prov.api_key_env not in a.credentials.env:
+                a.credentials.env.append(prov.api_key_env)
+        return self
 
     @model_validator(mode="after")
     def _roles(self) -> "Policy":

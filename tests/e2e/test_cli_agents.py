@@ -259,3 +259,66 @@ def test_opencode_plugins_from_your_config_dir_load_inside_the_sandbox(tmp_path,
     branch = next(ln.split()[1] for ln in r.stdout.splitlines() if ln.startswith("branch "))
     shown = subprocess.run(["git", "show", f"{branch}:plugin-ran.txt"], cwd=repo, capture_output=True, text=True)
     assert shown.stdout.strip() == "plugin loaded"
+
+
+def test_api_provider_models_become_a_coding_agent_and_a_text_planner(tmp_path, mock, monkeypatch):
+    """`multigenz providers`: add a provider (key stored 0600, never in the policy), fetch its model ids, make a coding
+    agent (opencode harness) and a text-only planner (LiteLLM) from two of them, give them roles and run a goal.
+    The mock provider refuses any request without the key, so the run proves the key reaches both agents."""
+    import yaml
+
+    pytest.importorskip("litellm")
+    if not which("opencode"):
+        pytest.skip("opencode not installed")
+    key = "sk-mock-provider-0123456789abcdef"
+    monkeypatch.setattr(mock_llm, "REQUIRED_KEY", key)
+    base_url, log = mock
+    xdg = tmp_path / "xdg"
+    env = {"XDG_CONFIG_HOME": str(xdg), "PATH": os.environ["PATH"] + ":" + SEARCH, "LITELLM_LOCAL_MODEL_COST_MAP": "True"}
+    env.pop("OPENAI_API_KEY", None)
+    policy = tmp_path / "policy.yaml"
+    policy.write_text(yaml.safe_dump({
+        "version": 1,
+        "orchestrator": {"max_parallel_agents": 1, "max_task_attempts": 2, "task_timeout_seconds": 240,
+                         "planning": "always"},
+        "agents": {},
+        "execution": {"isolation": "userns", "network": "host"},
+        "validation": {"require_tests": True, "default_profile": "exists", "integration_profile": "exists",
+                       "profiles": {"exists": {"commands": [{"argv": ["/usr/bin/test", "-f", mock_llm.FILE_NAME],
+                                                             "timeout_seconds": 30}]}}},
+    }, sort_keys=False))
+    repo = make_repo(tmp_path)
+
+    def mg(*args, stdin=None):
+        e = {**os.environ, **env, "MULTIGENZ_POLICY": str(policy), "MULTIGENZ_HOME": str(tmp_path / "state")}
+        e.pop("OPENAI_API_KEY", None)
+        return subprocess.run([sys.executable, "-m", "multigenz", *args], cwd=repo, input=stdin, capture_output=True,
+                              text=True, env=e, timeout=600)
+
+    r = mg("providers", "add", "custom", "--name", "mockprov", "--base-url", base_url, "--key-env", "MOCKPROV_API_KEY",
+           "--key-stdin", stdin=key + "\n")
+    assert r.returncode == 0, r.stdout + r.stderr
+    secrets = xdg / "multigenz" / "secrets.env"
+    assert oct(secrets.stat().st_mode & 0o777) == "0o600" and key in secrets.read_text()
+    assert key not in policy.read_text()                                     # never in the policy
+    models = mg("providers", "models", "mockprov")
+    assert models.returncode == 0 and models.stdout.split() == sorted(mock_llm.MODELS), models.stderr
+    assert mg("providers", "use", "mockprov", "mock-model", "--as", "coder", "--agent", "coder").returncode == 0
+    assert mg("providers", "use", "mockprov", "mock-large", "--as", "text", "--agent", "thinker").returncode == 0
+    assert mg("roles", "set", "planner", "thinker").returncode == 0
+    assert mg("roles", "set", "worker", "coder").returncode == 0
+    listed = mg("agents", "list").stdout
+    assert "coder        enabled" in listed and "thinker      enabled" in listed, listed
+
+    r = mg("run", f"Create the file {mock_llm.FILE_NAME}", "--repo", str(repo))
+    assert_integrated(tmp_path, policy, repo, r.stdout, "coder")
+    rid = r.stdout.split("run ", 1)[1].split(":", 1)[0]
+    events = [json.loads(line) for line in mg("runs", "events", rid).stdout.splitlines()]
+    assert next(e for e in events if e["kind"] == "plan.accepted")["payload"]["agent"] == "thinker"
+    rows = [json.loads(line) for line in log.read_text().splitlines()]
+    chats = [row for row in rows if row["path"].endswith("/chat/completions")]
+    models_used = {row["body"].get("model") for row in chats}
+    assert {"mock-model", "mock-large"} <= models_used                       # the coder and the planner model
+    assert all(row["auth"] in (f"Bearer {key}", key) for row in chats)      # every call carried the key
+    leaked = [str(f) for f in (tmp_path / "state").rglob("*") if f.is_file() and key.encode() in f.read_bytes()]
+    assert leaked == []                                                      # logs, events, configs: redacted / absent

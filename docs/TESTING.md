@@ -47,6 +47,12 @@ FastAPI service), `tests/security` (regressions), `tests/contract`, `tests/suppo
   (1 coding run, the model never sees a planning prompt) and for a split (3 coding runs, both parts integrated).
 - **Hermes and plugins.** Hermes Agent 0.19 runs plan → code → integrate in the sandbox (`test_single_cli_plans_codes_and_integrates[hermes]`);
   an opencode local plugin mounted from the config directory demonstrably runs inside the sandbox.
+- **API providers.** `tests/unit/test_providers.py` (0600 secrets file, environment precedence, generated configs reference
+  keys by name only, validation), `tests/integration/test_tui_providers.py` (TUI: add provider with a hidden key → models
+  fetched → filter → pick → agent added and shown on the Team screen; a wrong key is reported) and, with real opencode
+  and LiteLLM, `test_api_provider_models_become_a_coding_agent_and_a_text_planner`: everything set up through
+  `multigenz providers`, the mock provider refuses requests without the key, the planner model plans and the coder model
+  builds through opencode, every call carries the key and the key appears nowhere under MultiGenz's state directory.
 - `tests/contract/fixtures/help/` holds the real `--help` output of the CLI versions the built-in invocations were written
   for (agy's from a user's machine); the contract tests fail if a shipped invocation no longer verifies against them.
 
@@ -65,8 +71,8 @@ FastAPI service), `tests/security` (regressions), `tests/contract`, `tests/suppo
 ## Recorded results (2026-10-12)
 | run | where | result |
 |---|---|---|
-| full suite, dev tree, Python 3.13, with `MULTIGENZ_TEST_INSTALLER=1` and shellcheck (roles, Team screen, planning modes, Hermes, plugins) | this container | 317 passed |
-| `scripts/verify_clean_install.sh` (wheel in a fresh Python 3.12.3 venv) | this container | 316 passed, 1 skipped (install-from-checkout needs `src/`) |
+| full suite, dev tree, Python 3.13, with `MULTIGENZ_TEST_INSTALLER=1`, shellcheck and unraisable-exception warnings as errors (roles, Team screen, planning modes, Hermes, plugins, API providers) | this container | 324 passed |
+| `scripts/verify_clean_install.sh` (wheel in a fresh Python 3.12.3 venv) | this container | 323 passed, 1 skipped (install-from-checkout needs `src/`) |
 | `scripts/smoke_agents.sh` with codex, opencode, cline pointed at the mock model | this container | 3 of 3 validated |
 
 Both suite runs include the real Codex 0.162.1, opencode 1.19.0 and Cline 3.0.70 binaries (`tests/e2e/test_cli_agents.py`,

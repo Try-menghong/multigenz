@@ -94,6 +94,40 @@ Edit roles without touching YAML:
 Both rewrite only the `roles:` block and `enabled:` flags (comments are kept), validate the result with the policy
 loader before replacing the file, and keep the previous version as `policy.yaml.bak`.
 
+### API providers: use any model with an API key
+Besides the subscription CLIs, an agent can use a model from an API provider: OpenRouter, OpenAI, Anthropic, DeepSeek,
+Groq, Mistral, Together, xAI, Gemini, a local Ollama / LM Studio, or any OpenAI-compatible URL.
+
+In the TUI: Team screen → `m` → `n` (add provider: preset, endpoint, key variable, the key itself - hidden) → MultiGenz
+fetches the provider's model ids (`GET <endpoint>/models` with the key) → type to filter, Enter to pick → choose
+*coding agent* or *text only* → Add agent. Then give the new agent a role on the Team screen. The same from the shell:
+```bash
+multigenz providers presets
+multigenz providers add openrouter            # asks for OPENROUTER_API_KEY (hidden) and stores it
+multigenz providers models openrouter -s coder
+multigenz providers use openrouter qwen/qwen3-coder --as coder     # or --as text (planner/reviewer only)
+multigenz roles set worker openrouter-qwen3-coder
+```
+```yaml
+providers:
+  openrouter: {kind: openai-compatible, base_url: "https://openrouter.ai/api/v1", api_key_env: OPENROUTER_API_KEY}
+agents:
+  openrouter-qwen3-coder: {adapter: cli, command: opencode, provider: openrouter, model: qwen/qwen3-coder,
+                           capabilities: [architecture, coding, testing, review]}
+  openrouter-planner: {adapter: litellm, provider: openrouter, model: deepseek/deepseek-r1, capabilities: [architecture]}
+```
+- **Coding agents** (`adapter: cli`, `command: opencode`) need a harness that can edit files and run tests: MultiGenz
+  generates opencode's provider configuration for every attempt (mounted read-only in the sandbox) with the key
+  referenced as `{env:NAME}`, and hands that one variable to that agent only. opencode must be installed.
+- **Text-only agents** (`adapter: litellm`) call the API from the host for planning and reviews; they cannot change files.
+- **Keys** never go into the policy. `providers add` and the TUI store them in `~/.config/multigenz/secrets.env`
+  (mode 0600); a variable set in the environment overrides the file. Stored keys are redacted from every log, event and
+  report. Local servers (Ollama, LM Studio) need no key (`api_key_env: null`); the sandbox reaches them with `network: host`.
+- Anthropic's native API (`kind: anthropic`) lists models with `x-api-key`; its coding path uses opencode's Anthropic
+  provider and has not been run against the real API in development.
+
+![Model picker: filtered model ids of a provider](images/tui-model-picker.png)
+
 ### Planning and usage: one agent first, subagents only when needed
 Every agent run uses the agent's plan or API quota, so MultiGenz keeps the number of runs and the work per run small.
 `orchestrator.planning` decides how a goal is split (`multigenz roles planning auto|always|never`, the TUI Team
