@@ -115,31 +115,3 @@ def test_enable_claude_pytest_script_edits_a_policy_safely(tmp_path):
     gone = subprocess.run([sys.executable, str(REPO_ROOT / "scripts" / "enable_claude_pytest.py"), str(tmp_path / "nope.yaml")],
                           capture_output=True, text=True)
     assert gone.returncode == 2 and "no such policy file" in gone.stdout and "Traceback" not in gone.stderr
-
-
-def test_add_cli_agent_script_adds_codex_and_agy_safely(tmp_path):
-    import subprocess, sys
-    from tests.support.helpers import REPO_ROOT
-    src = (REPO_ROOT / "config" / "policy.claude.example.yaml").read_text()
-    f = tmp_path / "p.yaml"
-    f.write_text(src)
-    run = lambda *a: subprocess.run([sys.executable, str(REPO_ROOT / "scripts" / "add_cli_agent.py"), str(f), *a],
-                                    capture_output=True, text=True)
-    r = run("codex")
-    assert r.returncode == 0, r.stdout + r.stderr
-    r = run("agy", "--cred-file", "~/.agy/auth.json:/home/agent/.agy/auth.json", "--cred-env", "AGY_TOKEN")
-    assert r.returncode == 0, r.stdout + r.stderr
-    pol = load_policy(f)
-    assert set(pol.agents) == {"claude", "codex", "antigravity"}
-    assert pol.agents["codex"].command == "codex" and pol.agents["antigravity"].command == "agy"
-    assert [i.name for i in pol.agents["codex"].invocations] == ["exec-workspace-write", "exec-read-only"]
-    assert pol.agents["codex"].invocations[0].help_args == ["exec", "--help"]
-    assert pol.agents["codex"].invocations[0].argv[0] == "{command}" and pol.agents["codex"].invocations[0].stdin == "prompt"
-    assert pol.agents["codex"].credentials.files[0].dst == "/home/agent/.codex/auth.json"
-    assert pol.agents["antigravity"].credentials.env == ["AGY_TOKEN"]
-    assert pol.agents["antigravity"].credentials.files[0].dst == "/home/agent/.agy/auth.json"
-    assert pol.execution.isolation == "userns" and "# must be on PATH" in f.read_text()  # rest untouched
-    again = run("codex")
-    assert again.returncode == 1 and "already exists" in again.stdout
-    bad = run("codex", "--cred-file", "nocolon")
-    assert bad.returncode != 0

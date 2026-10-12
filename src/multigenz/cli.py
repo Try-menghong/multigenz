@@ -67,6 +67,34 @@ def doctor(policy: PolicyOpt = None, json_out: Annotated[bool, typer.Option("--j
         raise typer.Exit(1)
 
 
+@app.command()
+def init(
+    policy: PolicyOpt = None,
+    agent: Annotated[Optional[list[str]], typer.Option(
+        "--agent", "-a", help="Preset to include (repeatable). Default: every supported CLI found on PATH.")] = None,
+    overwrite: Annotated[bool, typer.Option("--overwrite", help="Replace an existing policy (a .bak copy is kept).")] = False,
+    trust_outer_sandbox: Annotated[bool, typer.Option(
+        "--trust-outer-sandbox", help="Also add Codex, with its own sandbox off (see `agents add codex`).")] = False,
+) -> None:
+    """Create a starter policy (userns sandbox, a pytest profile, and the coding-agent CLIs found on PATH)."""
+    from multigenz.config import config_policy_path
+    from multigenz.presets import PRESETS, detect_agents, init_policy
+
+    path = policy or config_policy_path()
+    keys = agent if agent else detect_agents()
+    try:
+        added = init_policy(path, agents=keys, overwrite=overwrite, trust_outer_sandbox=trust_outer_sandbox)
+    except (FileExistsError, ValueError, MultiGenzError) as exc:
+        raise _fail(str(exc), 2) from exc
+    typer.echo(f"wrote {path}")
+    typer.echo(f"agents: {', '.join(added) if added else '(none found on PATH; add one with `multigenz agents add`)'}")
+    skipped = [k for k in keys if k not in added]
+    if skipped:
+        typer.secho(f"skipped: {', '.join(skipped)} (Codex needs --trust-outer-sandbox; see `multigenz agents presets`)",
+                    fg=typer.colors.YELLOW)
+    typer.echo("next: edit the `tests` profile for your project, then run `multigenz doctor`")
+
+
 @agents_app.command("list")
 def agents_list(policy: PolicyOpt = None, json_out: Annotated[bool, typer.Option("--json")] = False) -> None:
     """List configured agents with detected capabilities (probes the binaries' --help)."""
@@ -92,6 +120,47 @@ def agents_list(policy: PolicyOpt = None, json_out: Annotated[bool, typer.Option
         state = "enabled " if r["enabled"] else "disabled"
         typer.echo(f"{r['name']:<12} {state} {r['adapter']:<8} caps={','.join(r['capabilities'])}")
         typer.echo(f"{'':<12} {r['invocation'] or r['reason']}")
+
+
+@agents_app.command("presets")
+def agents_presets() -> None:
+    """Ready-made agent entries (`multigenz agents add <preset>`), how well each is tested, and whether it is installed."""
+    import shutil as _sh
+
+    from multigenz.presets import PRESETS
+
+    for p in PRESETS.values():
+        found = _sh.which(p.command)
+        typer.echo(f"{p.key:<9} {p.status:<14} {('found ' + found) if found else 'not on PATH'}")
+        typer.echo(f"{'':<9} {p.summary}")
+        if not found and p.install_hint:
+            typer.echo(f"{'':<9} install: {p.install_hint}")
+
+
+@agents_app.command("add")
+def agents_add(
+    preset: Annotated[str, typer.Argument(help="Preset: claude, opencode, cline, codex, agy.")],
+    policy: PolicyOpt = None,
+    name: Annotated[Optional[str], typer.Option("--name", help="Policy key (default: the preset's).")] = None,
+    command: Annotated[Optional[str], typer.Option("--command", help="Binary path or name (default: the preset's).")] = None,
+    trust_outer_sandbox: Annotated[bool, typer.Option(
+        "--trust-outer-sandbox", help="Codex only: run Codex with its own sandbox off, confined by MultiGenz's.")] = False,
+) -> None:
+    """Add a preset agent to the policy file (backup kept; validated before it is kept)."""
+    from multigenz.config import config_policy_path
+    from multigenz.presets import PRESETS, add_preset
+
+    path = policy or config_policy_path()
+    try:
+        backup = add_preset(path, preset, name=name, command=command, trust_outer_sandbox=trust_outer_sandbox)
+    except (ValueError, PermissionError, FileNotFoundError, MultiGenzError) as exc:
+        raise _fail(str(exc), 2) from exc
+    p = PRESETS[preset]
+    typer.echo(f"added agents.{name or p.agent} ({p.status}) to {path}; backup at {backup}")
+    if p.status != "run-tested":
+        typer.secho(f"note: {p.key} is {p.status}; check it with `multigenz agents run {name or p.agent} ...` "
+                    "on a scratch repository first", fg=typer.colors.YELLOW)
+    typer.echo("next: multigenz agents list")
 
 
 @agents_app.command("run")

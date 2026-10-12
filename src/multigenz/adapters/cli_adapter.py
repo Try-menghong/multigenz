@@ -59,6 +59,7 @@ async def _capture(argv: list[str], timeout: float = 15.0) -> tuple[int | None, 
 class CliAdapter(AgentAdapter):
     provider_class = "cli"
     BUILTIN_INVOCATIONS: list[InvocationCfg] = []
+    NO_INVOCATION_HINT: str | None = None
 
     def __init__(self, name: str, cfg: AgentCfg, *, runner: CommandRunner | None = None):
         self.name = name
@@ -98,8 +99,8 @@ class CliAdapter(AgentAdapter):
         if not cands:
             self._probe = AdapterProbe(
                 name=self.name, enabled=False, binary=binary, version=version,
-                reason="no non-interactive invocation configured; define agents.<name>.invocations "
-                       "in the policy (flags are never assumed)")
+                reason=self.NO_INVOCATION_HINT or ("no non-interactive invocation configured; define "
+                                                   "agents.<name>.invocations in the policy (flags are never assumed)"))
             return self._probe
         help_cache: dict[tuple[str, ...], str] = {}
         verified: list[InvocationCfg] = []

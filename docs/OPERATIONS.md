@@ -31,11 +31,6 @@ agents:
         requires_help_tokens: ["<each flag used>"]
         modes: [code, conflict]                          # which roles this invocation may serve
 ```
-`scripts/add_cli_agent.py POLICY codex|agy [--cred-file SRC:DST] [--cred-env NAME]` appends a Codex (`codex exec`) or
-Antigravity (`agy --print`) entry built from the flags those binaries list in their own `--help`. It proves nothing about
-behaviour: check with `multigenz agents list`, then `multigenz agents run <agent> ... --repo <scratch repo>` before routing real work.
-Credential files are mounted read-only into that agent's sandbox only.
-
 `credentials.env` / `credentials.files` grant a *named* host variable/file to *that agent only*; nothing else from the host
 environment is ever passed. `adapter: litellm` agents run in-process for planning/review text only and cannot produce commits.
 

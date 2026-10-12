@@ -41,4 +41,5 @@ markers = [
   "acceptance: AT-01..AT-16 from docs/IMPLEMENTATION_PLAN.md",
   "e2e: end-to-end scenarios A-C",
   "needs_userns: requires unprivileged user namespaces (userns sandbox backend)",
+  "cli_agents: drives real coding-agent CLIs (opencode, cline, codex) against a local mock model; skipped if absent",
 ]

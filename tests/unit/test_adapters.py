@@ -28,9 +28,13 @@ async def test_unverified_flags_disable_adapter(scenario):
 
 
 async def test_unknown_cli_has_no_assumed_flags():
-    pol = parse_policy({"agents": {"codex": {"adapter": "cli", "command": str(SCRIPTED), "capabilities": ["coding"]}}})
-    p = await build_adapters(pol)["codex"].probe()
+    pol = parse_policy({"agents": {"codex": {"adapter": "cli", "command": str(SCRIPTED), "capabilities": ["coding"]},
+                                   "other": {"adapter": "cli", "command": str(SCRIPTED), "capabilities": ["coding"]}}})
+    ads = build_adapters(pol)
+    p = await ads["other"].probe()
     assert not p.enabled and "flags are never assumed" in p.reason
+    p = await ads["codex"].probe()  # Codex: never enabled implicitly; the reason says how an admin can opt in
+    assert not p.enabled and "--trust-outer-sandbox" in p.reason
 
 
 async def test_missing_binary_disabled():

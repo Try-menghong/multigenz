@@ -272,6 +272,14 @@ def default_state_home() -> Path:
     return Path(base).expanduser().resolve() / "multigenz"
 
 
+def config_policy_path() -> Path:
+    """Where `multigenz init` writes the policy: $MULTIGENZ_POLICY, else ~/.config/multigenz/policy.yaml."""
+    env = os.environ.get("MULTIGENZ_POLICY")
+    if env:
+        return Path(env).expanduser()
+    return Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "multigenz" / "policy.yaml"
+
+
 def default_policy_path() -> Path | None:
     env = os.environ.get("MULTIGENZ_POLICY")
     if env:

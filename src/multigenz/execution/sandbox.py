@@ -39,6 +39,45 @@ ETC_RO = ["/etc/ssl", "/etc/alternatives", "/etc/ld.so.cache", "/etc/ld.so.conf"
           "/etc/ld.so.conf.d", "/etc/localtime"]
 
 
+def runtime_mounts(exe: str, host_path: str | None = None) -> tuple[list[str], list[str]]:
+    """Directories (outside /usr) a CLI needs besides its own symlink chain, and dirs to put on the sandbox PATH.
+
+    * an npm-installed CLI (``.../node_modules/<pkg>/...``) loads sibling packages, e.g. its platform-specific binary,
+      so the whole ``node_modules`` root it lives in is exposed read-only;
+    * a script (``#!/usr/bin/env node`` or ``#!/abs/interpreter``) needs its interpreter: only the interpreter's own
+      directory is exposed (never a whole prefix such as ``~/.local``, whose ``share/`` may hold other tools' logins).
+    """
+    dirs: list[str] = []
+    path_dirs: list[str] = []
+    final = os.path.realpath(exe)
+    marker = "/node_modules/"
+    if marker in final:
+        dirs.append(final[: final.index(marker) + len(marker) - 1])
+    try:
+        with open(final, "rb") as fh:
+            head = fh.read(256)
+    except OSError:
+        head = b""
+    if head.startswith(b"#!"):
+        parts = head[2:].split(b"\n", 1)[0].decode("utf-8", "replace").split()
+        interp = None
+        if parts and os.path.basename(parts[0]) == "env":
+            args = [a for a in parts[1:] if not a.startswith("-")]
+            if args:
+                interp = shutil.which(args[0], path=host_path if host_path is not None else os.environ.get("PATH"))
+        elif parts:
+            interp = parts[0]
+        if interp and os.path.isabs(interp):
+            for hop in (interp, os.path.realpath(interp)):
+                d = os.path.dirname(hop)
+                if not d.startswith("/usr/") and d not in ("/bin", "/sbin") and d not in dirs:
+                    dirs.append(d)
+            d = os.path.dirname(interp)
+            if not d.startswith("/usr/") and d not in ("/bin", "/sbin"):
+                path_dirs.append(d)
+    return dirs, path_dirs
+
+
 @dataclass
 class SandboxRequest:
     argv: list[str]
@@ -193,10 +232,16 @@ class UsernsBackend(SandboxBackend):
                 seen.add(hop)
                 tgt = os.readlink(hop)
                 hop = tgt if os.path.isabs(tgt) else os.path.normpath(os.path.join(os.path.dirname(hop), tgt))
+        runtime_path: list[str] = []
+        if os.path.isabs(exe):
+            dirs, runtime_path = runtime_mounts(exe)
+            for d in dirs:
+                if not covered(d):
+                    spec["ro_binds"].append([d, d])
         # Script-style CLIs (`#!/usr/bin/env node`) find their runtime next to themselves (nvm, /opt/<tool>/bin):
         # make the command's own directories (outside /usr) part of the sandbox PATH.
         if os.path.isabs(exe) and "PATH" not in req.env:
-            extra, hop, seen = [], exe, set()
+            extra, hop, seen = list(runtime_path), exe, set()
             while True:
                 d = os.path.dirname(hop)
                 if not d.startswith("/usr/") and d not in extra:
