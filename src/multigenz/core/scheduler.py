@@ -13,7 +13,7 @@ import json
 import time
 from dataclasses import dataclass, field
 
-from multigenz.config import Policy
+from multigenz.config import Policy, RolesCfg
 from multigenz.contracts.agent import AdapterProbe
 from multigenz.contracts.paths import sets_overlap
 from multigenz.contracts.task import TaskSpec, TaskStatus
@@ -98,11 +98,17 @@ def capacity_from(policy: Policy, running_agents: list[tuple[str, str]]) -> Capa
 
 
 def candidates(spec: TaskSpec, mode: str, probes: dict[str, AdapterProbe], *, excluded: frozenset[str],
-               disabled: set[str]) -> list[str]:
-    """Agents able to run ``spec`` in ``mode``: enabled, mode verified, capabilities covered."""
+               disabled: set[str], roles: RolesCfg | None = None) -> list[str]:
+    """Agents able to run ``spec`` in ``mode``: enabled, mode verified, capabilities covered.
+
+    With ``roles`` configured for the mode (workers for code, conflict resolvers for conflicts) only those agents are
+    candidates, in the administrator's order of preference; otherwise every capable agent, in policy order.
+    """
+    allowed = roles.for_mode(mode) if roles is not None else []
     out = []
-    for name, p in probes.items():
-        if name in excluded or name in disabled or not p.enabled or mode not in p.modes:
+    for name in (allowed or list(probes)):
+        p = probes.get(name)
+        if p is None or name in excluded or name in disabled or not p.enabled or mode not in p.modes:
             continue
         if not spec.required_capabilities <= set(p.capabilities):
             continue
@@ -123,9 +129,10 @@ def pick_dispatch(ready: list[TaskView], active: list[TaskView], *, policy: Poli
             continue
         if any(sets_overlap(t.spec.allowed_paths, other) for other in claimed):
             continue  # serialise conflicting exclusive ownership
-        cands = candidates(t.spec, t.mode, probes, excluded=t.excluded, disabled=disabled)
-        order = list(policy.agents)  # policy order is the tie-breaker
-        cands.sort(key=lambda n: (cap.running_by_agent.get(n, 0), order.index(n)))
+        cands = candidates(t.spec, t.mode, probes, excluded=t.excluded, disabled=disabled, roles=policy.roles)
+        # least-loaded first; ties go to the role's order of preference (or policy order without roles)
+        rank = {n: i for i, n in enumerate(cands)}
+        cands.sort(key=lambda n: (cap.running_by_agent.get(n, 0), rank[n]))
         for agent in cands:
             klass = klass_of.get(agent, "cli")
             if cap.room(agent, klass):
@@ -136,7 +143,8 @@ def pick_dispatch(ready: list[TaskView], active: list[TaskView], *, policy: Poli
     return chosen
 
 
-def unroutable(ready: list[TaskView], *, probes: dict[str, AdapterProbe], disabled: set[str]) -> list[str]:
+def unroutable(ready: list[TaskView], *, probes: dict[str, AdapterProbe], disabled: set[str],
+               roles: RolesCfg | None = None) -> list[str]:
     """READY tasks for which no agent could *ever* run (ignoring current load)."""
     return [t.task_id for t in ready
-            if not candidates(t.spec, t.mode, probes, excluded=t.excluded, disabled=disabled)]
+            if not candidates(t.spec, t.mode, probes, excluded=t.excluded, disabled=disabled, roles=roles)]

@@ -272,7 +272,8 @@ class Orchestrator:
         Returns True when it changed state (the caller re-evaluates immediately).
         """
         ready = [v for v in views if v.status == S.READY]
-        dead = sched.unroutable(ready, probes=self.svc.probes, disabled=self._disabled_providers())
+        dead = sched.unroutable(ready, probes=self.svc.probes, disabled=self._disabled_providers(),
+                                roles=self.policy.roles)
         for tid in dead:
             self.sm.task(self.run_id, tid, S.FAILED, reason="no compatible provider available",
                          failure_reason="no_compatible_provider")
@@ -499,8 +500,9 @@ class Orchestrator:
     def _requeue_excluding(self, task: dict, agent: str, attempt_id: str, reason: str) -> None:
         excl = sorted(set(json.loads(task["excluded_providers"])) | {agent})
         spec = TaskSpec.model_validate_json(task["spec"])
-        remaining = sched.candidates(spec, "code", self.svc.probes, excluded=frozenset(excl),
-                                     disabled=self._disabled_providers())
+        mode = "conflict" if "pending_kind" in task.keys() and task["pending_kind"] == "conflict" else "code"
+        remaining = sched.candidates(spec, mode, self.svc.probes, excluded=frozenset(excl),
+                                     disabled=self._disabled_providers(), roles=self.policy.roles)
         if not remaining:
             self.sm.task(self.run_id, task["task_id"], S.FAILED, reason=f"{reason}; no compatible provider left",
                          attempt_id=attempt_id, excluded_providers=json.dumps(excl),

@@ -35,6 +35,11 @@ FastAPI service), `tests/security` (regressions), `tests/contract`, `tests/suppo
   planner prompt with a JSON plan and a coding prompt with one tool call that creates a file, using whatever shell or
   write tool the CLI offered. This proves the CLI integration (stdin prompts, unattended flags, sandbox mounts, logins,
   plan → code → validate → integrate, mixed vendors in one run); it says nothing about model quality.
+- **Roles.** `tests/unit/test_roles.py` (routing rules), `tests/integration/test_roles_run.py` (orchestrated runs where
+  three identical scripted agents could each do everything, so only the roles explain who planned, coded and reviewed),
+  `tests/integration/test_tui_team.py` (the Team screen driven through Textual's pilot: assign, reorder, refuse an
+  impossible assignment, disable, add a preset, confirm before discarding, save) and, with the real CLIs,
+  `test_roles_pick_planner_worker_and_reviewer_across_vendors` (Cline plans, Codex codes, opencode reviews).
 - `tests/contract/fixtures/help/` holds the real `--help` output of the CLI versions the built-in invocations were written
   for (agy's from a user's machine); the contract tests fail if a shipped invocation no longer verifies against them.
 
@@ -53,8 +58,8 @@ FastAPI service), `tests/security` (regressions), `tests/contract`, `tests/suppo
 ## Recorded results (2026-10-12)
 | run | where | result |
 |---|---|---|
-| full suite, dev tree, Python 3.13, with `MULTIGENZ_TEST_INSTALLER=1` and shellcheck | this container | 284 passed |
-| `scripts/verify_clean_install.sh` (wheel in a fresh Python 3.12.3 venv) | this container | 283 passed, 1 skipped (install-from-checkout needs `src/`) |
+| full suite, dev tree, Python 3.13, with `MULTIGENZ_TEST_INSTALLER=1` and shellcheck (incl. roles + Team screen) | this container | 301 passed |
+| `scripts/verify_clean_install.sh` (wheel in a fresh Python 3.12.3 venv) | this container | 300 passed, 1 skipped (install-from-checkout needs `src/`) |
 | `scripts/smoke_agents.sh` with codex, opencode, cline pointed at the mock model | this container | 3 of 3 validated |
 
 Both suite runs include the real Codex 0.162.1, opencode 1.19.0 and Cline 3.0.70 binaries (`tests/e2e/test_cli_agents.py`,

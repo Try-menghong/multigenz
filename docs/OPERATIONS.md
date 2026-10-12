@@ -63,6 +63,35 @@ The planner needs an agent with the `architecture` capability and a read-only (`
 `credentials.env` / `credentials.files` grant a *named* host variable/file to *that agent only*; nothing else from the host
 environment is ever passed. `adapter: litellm` agents run in-process for planning/review text only and cannot produce commits.
 
+### Roles: who plans, codes, reviews and resolves conflicts
+```yaml
+roles:
+  planner: ["claude", "opencode"]   # turns the goal into a task graph (the orchestrating agent); next = fallback
+  worker: ["codex", "opencode"]     # write the code; order = preference, parallel tasks spread over them
+  reviewer: ["cline"]               # veto-only second opinion on every validated change (non-empty = review on)
+  conflict: []                      # merge-conflict resolution; empty = the workers
+```
+Every list is ordered: the first usable agent is preferred and the next is the fallback (an agent counts as usable when
+it is enabled and has a verified invocation for that role's mode: `plan`, `code`, `review` or `conflict`). An empty
+list keeps automatic selection by capability (planner: `architecture` capability; worker: the task's capabilities;
+reviewer: off unless `validation.review_with_agent`; conflict: the workers). With `worker` set, tasks never go to
+another agent, and the planner is only offered the workers' capabilities. LiteLLM agents may plan or review but cannot
+be workers or conflict resolvers. MultiGenz itself still owns every decision; roles only choose which agent is asked.
+
+Edit roles without touching YAML:
+
+![Team screen: Claude plans, Codex then opencode code, Cline reviews](images/tui-team.png)
+
+- `multigenz tui` → `t` (or `multigenz tui --team`): a grid of agents × roles. `space` adds/removes the agent in the
+  role under the cursor, `[`/`]` reorder, `c` puts a role back to automatic, `e` enables/disables an agent, `a` adds an
+  agent from a preset, `s` saves. `#1`/`#2` show the order, `auto` who automatic selection would use, `n/a` that the
+  agent has no verified invocation for that role.
+- `multigenz roles` (show), `multigenz roles set worker codex opencode`, `multigenz roles clear reviewer|all`,
+  `multigenz agents enable|disable <name>`.
+
+Both rewrite only the `roles:` block and `enabled:` flags (comments are kept), validate the result with the policy
+loader before replacing the file, and keep the previous version as `policy.yaml.bak`.
+
 ### Validation profiles
 Fixed argv lists run in the sandbox against an *exported copy* of the exact tree under test (no network, no `.git`).
 `validation.default_profile` verifies each task result; `integration_profile` verifies the **merged tree** before it may

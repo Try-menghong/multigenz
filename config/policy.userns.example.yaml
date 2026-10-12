@@ -17,6 +17,13 @@ agents:
     # The agent needs its own provider credential. Grant ONLY that variable, to ONLY this agent:
     # credentials:
     #   env: [ANTHROPIC_API_KEY]
+# Who plays which part, in order of preference (the next one is the fallback). Empty = automatic (by capability).
+# Edit with `multigenz tui` (Team) or `multigenz roles`. Every name must be an agent above.
+# roles:
+#   planner: [claude]        # turns the goal into a task graph (the orchestrating agent)
+#   worker: [claude]         # writes the code
+#   reviewer: []             # veto-only second opinion on each change (non-empty turns agent review on)
+#   conflict: []             # merge-conflict resolution (empty: the workers)
 execution:
   isolation: userns
   # `none` = no network at all (tests, offline agents). A hosted-model CLI needs the network: `host` is an explicit,

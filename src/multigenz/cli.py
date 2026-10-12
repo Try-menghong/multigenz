@@ -21,6 +21,9 @@ agents_app = typer.Typer(help="Inspect and exercise agent adapters.", no_args_is
 app.add_typer(agents_app, name="agents")
 runs_app = typer.Typer(help="Inspect and control runs.", no_args_is_help=True)
 app.add_typer(runs_app, name="runs")
+roles_app = typer.Typer(help="Choose which agent plans, which ones code, review and resolve conflicts.",
+                        invoke_without_command=True)
+app.add_typer(roles_app, name="roles")
 
 PolicyOpt = Annotated[Optional[Path], typer.Option("--policy", "-p", help="Policy YAML (default: $MULTIGENZ_POLICY, "
                                                    "~/.config/multigenz/policy.yaml, then built-in defaults).")]
@@ -155,6 +158,107 @@ def agents_add(
         typer.secho(f"note: {p.key} is {p.status}; check it with `multigenz agents run {name or p.agent} ...` "
                     "on a scratch repository first", fg=typer.colors.YELLOW)
     typer.echo("next: multigenz agents list")
+
+
+def _policy_file(policy: Path | None) -> Path:
+    from multigenz.config import config_policy_path, default_policy_path
+
+    path = policy or default_policy_path() or config_policy_path()
+    if not Path(path).expanduser().is_file():
+        raise _fail(f"{path}: no policy file (create one with `multigenz init`)", 2)
+    return Path(path).expanduser()
+
+
+def _save(path: Path, **edits) -> Policy:
+    from multigenz.policy_edit import save_policy_edits, short_error
+
+    try:
+        pol, backup = save_policy_edits(path, **edits)
+    except (MultiGenzError, FileNotFoundError, KeyError) as exc:
+        raise _fail(f"not saved: {short_error(exc)}", 2) from exc
+    typer.echo(f"saved {path} (previous version: {backup})")
+    return pol
+
+
+@agents_app.command("enable")
+def agents_enable(name: str, policy: PolicyOpt = None) -> None:
+    """Enable an agent in the policy file."""
+    _save(_policy_file(policy), enabled={name: True})
+
+
+@agents_app.command("disable")
+def agents_disable(name: str, policy: PolicyOpt = None) -> None:
+    """Disable an agent in the policy file (it is never used, whatever its roles)."""
+    _save(_policy_file(policy), enabled={name: False})
+
+
+ROLE_HELP = {
+    "planner": "plans: turns the goal into a task graph (the orchestrating agent)",
+    "worker": "codes: runs the tasks",
+    "reviewer": "reviews: veto-only second opinion on each validated change",
+    "conflict": "resolves merge conflicts",
+}
+ROLE_AUTO = {
+    "planner": "automatic: enabled agents with the 'architecture' capability and a plan invocation",
+    "worker": "automatic: any enabled agent with the task's capabilities",
+    "reviewer": "automatic: off unless validation.review_with_agent (then 'review'-capable agents)",
+    "conflict": "automatic: same as the workers",
+}
+
+
+def _show_roles(pol: Policy) -> None:
+    from multigenz.config import ROLE_NAMES
+
+    for r in ROLE_NAMES:
+        chosen = getattr(pol.roles, r)
+        if r == "conflict" and not chosen and pol.roles.worker:
+            value = "same as the workers: " + " -> ".join(pol.roles.worker)
+        else:
+            value = " -> ".join(chosen) if chosen else ROLE_AUTO[r]
+        disabled = [n for n in chosen if not pol.agents[n].enabled]
+        note = f"   (disabled in policy: {', '.join(disabled)})" if disabled else ""
+        typer.echo(f"{r:<9} {value}{note}")
+        typer.echo(f"{'':<9} {ROLE_HELP[r]}")
+
+
+@roles_app.callback()
+def roles_main(ctx: typer.Context, policy: PolicyOpt = None) -> None:
+    """Show who plans, codes, reviews and resolves conflicts (``multigenz roles``)."""
+    if ctx.invoked_subcommand is None:
+        _show_roles(_load(policy))
+
+
+@roles_app.command("set")
+def roles_set(
+    role: Annotated[str, typer.Argument(help="planner, worker, reviewer or conflict.")],
+    agents: Annotated[list[str], typer.Argument(help="Agents in order of preference.")],
+    policy: PolicyOpt = None,
+) -> None:
+    """Assign agents to a role, in order of preference (the next one is the fallback)."""
+    from multigenz.config import ROLE_NAMES
+
+    if role not in ROLE_NAMES:
+        raise _fail(f"unknown role {role!r}; choose from {', '.join(ROLE_NAMES)}", 2)
+    path = _policy_file(policy)
+    pol = _load(path)
+    roles = {r: list(getattr(pol.roles, r)) for r in ROLE_NAMES} | {role: list(agents)}
+    _show_roles(_save(path, roles=roles))
+
+
+@roles_app.command("clear")
+def roles_clear(
+    role: Annotated[str, typer.Argument(help="planner, worker, reviewer, conflict, or all.")],
+    policy: PolicyOpt = None,
+) -> None:
+    """Return a role (or all) to automatic selection by capability."""
+    from multigenz.config import ROLE_NAMES
+
+    if role != "all" and role not in ROLE_NAMES:
+        raise _fail(f"unknown role {role!r}; choose from {', '.join(ROLE_NAMES)} or all", 2)
+    path = _policy_file(policy)
+    pol = _load(path)
+    roles = {r: [] if role in (r, "all") else list(getattr(pol.roles, r)) for r in ROLE_NAMES}
+    _show_roles(_save(path, roles=roles))
 
 
 @agents_app.command("run")
@@ -403,8 +507,10 @@ def runs_resume(run_id: str, json_out: Annotated[bool, typer.Option("--json")] =
 
 
 @app.command()
-def tui(policy: PolicyOpt = None) -> None:
-    """Interactive dashboard: run history, live task states, redacted logs, cancel, doctor."""
+def tui(policy: PolicyOpt = None,
+        team: Annotated[bool, typer.Option("--team", help="Open the Team screen (who plans, codes, reviews).")] = False
+        ) -> None:
+    """Interactive dashboard: run history, live task states, redacted logs, cancel, doctor, team (roles)."""
     from multigenz.tui.app import MultiGenzApp
 
     pol, err = None, None
@@ -412,7 +518,8 @@ def tui(policy: PolicyOpt = None) -> None:
         pol = load_policy(policy)
     except MultiGenzError as exc:
         err = str(exc)
-    MultiGenzApp(default_state_home(), policy=pol, policy_error=err).run()
+    MultiGenzApp(default_state_home(), policy=pol, policy_error=err, policy_path=policy,
+                 start="team" if team else "runs").run()
 
 
 @runs_app.command("logs")

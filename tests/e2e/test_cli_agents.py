@@ -161,3 +161,27 @@ def test_codex_plans_codes_and_integrates_with_its_own_sandbox(tmp_path, mock):
                for i in row["body"].get("input", []) if isinstance(i, dict) and i.get("type") == "function_call_output"]
     assert outputs and all("exited with code 0" in o for o in outputs), outputs
     assert not any("bwrap" in o for o in outputs)
+
+
+def test_roles_pick_planner_worker_and_reviewer_across_vendors(tmp_path, mock):
+    """Every agent could do everything; the roles alone decide: Cline plans, Codex codes, opencode reviews."""
+    if not (which("opencode") and which("cline") and which("codex")):
+        pytest.skip("needs codex, opencode and cline")
+    base_url, _ = mock
+    files = provider_files(tmp_path, base_url)
+    full = ["architecture", "coding", "testing", "review"]
+    policy = write_policy(tmp_path, {"opencode": full, "cline": full, "codex": full}, files)
+    pol = json.loads(policy.read_text())
+    pol["roles"] = {"planner": ["cline"], "worker": ["codex"], "reviewer": ["opencode"], "conflict": []}
+    policy.write_text(json.dumps(pol))
+    repo = make_repo(tmp_path)
+    shown = run_mg(tmp_path, policy, repo, "roles").stdout
+    assert "planner   cline" in shown and "worker    codex" in shown and "reviewer  opencode" in shown
+    r = run_mg(tmp_path, policy, repo, "run", f"Create the file {mock_llm.FILE_NAME}", "--repo", str(repo),
+               env={"MOCK_API_KEY": "dummy"})
+    assert_integrated(tmp_path, policy, repo, r.stdout, "codex")
+    rid = r.stdout.split("run ", 1)[1].split(":", 1)[0]
+    events = [json.loads(line) for line in run_mg(tmp_path, policy, repo, "runs", "events", rid).stdout.splitlines()]
+    assert next(e for e in events if e["kind"] == "plan.accepted")["payload"]["agent"] == "cline"
+    checks = [c for e in events if e["kind"] == "validation.result" for c in e["payload"]["checks"]]
+    assert {"name": "review:agent[opencode]", "passed": True} in [{k: c[k] for k in ("name", "passed")} for c in checks]

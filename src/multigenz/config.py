@@ -231,10 +231,51 @@ class GoalsCfg(_Strict):
         return v
 
 
+ROLE_NAMES = ("planner", "worker", "reviewer", "conflict")
+ROLE_MODES = {"planner": "plan", "worker": "code", "reviewer": "review", "conflict": "conflict"}
+
+
+class RolesCfg(_Strict):
+    """Which agents play which part, in order of preference (the next one is the fallback).
+
+    An empty list means automatic: chosen by capability, as without this section. ``planner`` is the agent that turns
+    the goal into a task graph (the "orchestrator" agent; MultiGenz itself still owns every decision), ``worker`` agents
+    write the code, ``reviewer`` agents give a veto-only second opinion on each validated diff (a non-empty list turns
+    agent review on), ``conflict`` agents resolve merge conflicts (empty: the workers).
+    """
+
+    planner: list[str] = Field(default_factory=list)
+    worker: list[str] = Field(default_factory=list)
+    reviewer: list[str] = Field(default_factory=list)
+    conflict: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _check(self) -> "RolesCfg":
+        for role in ROLE_NAMES:
+            names = getattr(self, role)
+            dup = sorted({n for n in names if names.count(n) > 1})
+            if dup:
+                raise ValueError(f"roles.{role} lists {dup} more than once")
+        return self
+
+    def for_mode(self, mode: str) -> list[str]:
+        """Ordered agents allowed for an execution mode; empty = automatic."""
+        if mode == "code":
+            return list(self.worker)
+        if mode == "conflict":
+            return list(self.conflict or self.worker)
+        if mode == "plan":
+            return list(self.planner)
+        if mode == "review":
+            return list(self.reviewer)
+        return []
+
+
 class Policy(_Strict):
     version: int = 1
     orchestrator: OrchestratorCfg = Field(default_factory=OrchestratorCfg)
     agents: dict[str, AgentCfg] = Field(default_factory=dict)
+    roles: RolesCfg = Field(default_factory=RolesCfg)
     execution: ExecutionCfg = Field(default_factory=ExecutionCfg)
     git: GitCfg = Field(default_factory=GitCfg)
     validation: ValidationCfg = Field(default_factory=ValidationCfg)
@@ -254,6 +295,17 @@ class Policy(_Strict):
             if not NAME_RE.match(n):
                 raise ValueError(f"invalid agent name {n!r}")
         return v
+
+    @model_validator(mode="after")
+    def _roles(self) -> "Policy":
+        for role in ROLE_NAMES:
+            for n in getattr(self.roles, role):
+                if n not in self.agents:
+                    raise ValueError(f"roles.{role}: unknown agent {n!r} (not in agents)")
+                if role in ("worker", "conflict") and self.agents[n].adapter != "cli":
+                    raise ValueError(f"roles.{role}: {n!r} is a {self.agents[n].adapter} agent and cannot change "
+                                     f"files; only cli agents can be {role}s")
+        return self
 
     def snapshot(self) -> tuple[str, str]:
         """Canonical JSON + sha256, stored with each run (policy snapshot)."""

@@ -49,7 +49,9 @@ GitHub Pages is enabled (Settings → Pages → Source: GitHub Actions) and the 
 | `codex` | `codex exec --sandbox workspace-write` / `read-only` | end to end in the sandbox against a local scripted model | keeps its own bubblewrap sandbox inside MultiGenz's; uses `~/.codex/auth.json` |
 | `agy` | `agy --print --mode accept-edits` | experimental: flags from `agy --help`, never executed here | check with `multigenz agents run` first |
 
-Add one with `multigenz agents add <preset>`. To try your installed agents against their real providers (uses a little of
+Add one with `multigenz agents add <preset>`. Choose which agent plans (the orchestrating agent), which ones code,
+review and resolve conflicts in `multigenz tui` → Team (`t`), or with `multigenz roles`; see
+[docs/OPERATIONS.md](docs/OPERATIONS.md#roles-who-plans-codes-reviews-and-resolves-conflicts). To try your installed agents against their real providers (uses a little of
 each plan): `scripts/smoke_agents.sh`. Any other CLI with a non-interactive mode can be configured by hand
 (`agents.<name>.invocations`, see [docs/OPERATIONS.md](docs/OPERATIONS.md)); flags are always verified against the
 binary's own `--help` before use.
@@ -59,11 +61,14 @@ binary's own `--help` before use.
 multigenz init [--agent P] [--overwrite]   starter policy with the agent CLIs found on PATH
 multigenz doctor                         environment, isolation backends, adapter capability detection
 multigenz agents presets | add P         supported agent CLIs; add one to the policy (validated, backup kept)
+multigenz agents enable | disable NAME   switch an agent on or off in the policy
+multigenz roles [set ROLE A B | clear R]  who plans (orchestrating agent), codes, reviews, resolves conflicts
 multigenz agents list | run              inspect adapters; run ONE sandboxed agent -> validated commit
 multigenz plan "<goal>" [--out plan.json]   planner agent proposes a DAG; validated; nothing executed
 multigenz run "<goal>" --repo R [--plan-file plan.json] [--detach]
 multigenz runs list | show | events | audit | logs | cancel | resume
-multigenz tui                            dashboards: history, live task states, redacted logs, cancel, doctor
+multigenz tui [--team]                   dashboards: history, live task states, redacted logs, cancel, doctor,
+                                         and the Team screen to choose each agent's role
 ```
 `Ctrl-C`/SIGTERM on `run` is a *resumable* interrupt (agents stopped, work preserved); `runs cancel` is terminal.
 A run whose orchestrator was killed shows as *orphaned*; `runs resume` reconciles leases, OS processes, worktrees and

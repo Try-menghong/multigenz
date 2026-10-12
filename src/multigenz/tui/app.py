@@ -239,6 +239,7 @@ class RunsScreen(Screen):
     BINDINGS = [
         Binding("o", "open", "Open (or Enter)"),
         Binding("n", "new", "New run"),
+        Binding("t", "team", "Team (roles)"),
         Binding("d", "doctor", "Doctor"),
         Binding("r", "refresh", "Refresh"),
         Binding("q", "app.quit", "Quit"),
@@ -295,26 +296,45 @@ class RunsScreen(Screen):
     def action_doctor(self) -> None:
         self.app.push_screen(DoctorScreen())
 
+    def action_team(self) -> None:
+        from multigenz.tui.team import TeamScreen
+
+        self.app.push_screen(TeamScreen(self.app.policy_path))  # type: ignore[attr-defined]
+
 
 class MultiGenzApp(App):
     TITLE = "MultiGenz"
     CSS = """
-    #confirm, #new-run { width: 80%; height: auto; padding: 1 2; border: thick $accent; background: $surface; }
-    ConfirmScreen, NewRunScreen { align: center middle; }
+    #confirm, #new-run, #add-agent { width: 80%; height: auto; padding: 1 2; border: thick $accent; background: $surface; }
+    ConfirmScreen, NewRunScreen, AddAgentScreen { align: center middle; }
+    #presets { height: auto; max-height: 12; }
+    #team-intro { height: auto; padding: 0 1; color: $text-muted; }
+    #matrix { height: auto; max-height: 50%; }
+    #team-summary { height: auto; padding: 1 1 0 1; border-top: solid $primary; }
+    #team-status { height: auto; padding: 0 1; color: $warning; }
     #run-header { height: 6; padding: 0 1; border-bottom: solid $primary; }
     #tasks { height: 40%; }
     #events { height: 1fr; border-top: solid $primary; }
     """
 
-    def __init__(self, home: Path, policy=None, policy_error: str | None = None):
+    def __init__(self, home: Path, policy=None, policy_error: str | None = None, policy_path: Path | None = None,
+                 start: str = "runs"):
         super().__init__()
+        from multigenz.config import config_policy_path, default_policy_path
+
         self.home = home
         self.policy = policy
         self.policy_error = policy_error
+        self.policy_path = Path(policy_path or default_policy_path() or config_policy_path()).expanduser()
+        self.start = start
         self.redactor = Redactor.from_environ(os.environ)
 
     def on_mount(self) -> None:
         self.push_screen(RunsScreen())
+        if self.start == "team":
+            from multigenz.tui.team import TeamScreen
+
+            self.push_screen(TeamScreen(self.policy_path))
 
     def submit_run(self, goal: str, repo: Path, plan_file: Path | None) -> str:
         """Create the run (validating policy/plan/isolation up front) and start a detached worker."""

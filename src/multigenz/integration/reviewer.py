@@ -59,6 +59,9 @@ class AgentReviewer:
         self._count: dict[str, int] = {}
 
     def _agents(self) -> list[str]:
+        chosen = self.svc.policy.roles.reviewer
+        if chosen:  # the administrator's reviewers, in order (the next is the fallback)
+            return [n for n in chosen if (p := self.svc.probes.get(n)) and p.enabled and "review" in p.modes]
         return [n for n, p in self.svc.probes.items() if p.enabled and "review" in p.modes
                 and "review" in p.capabilities]
 

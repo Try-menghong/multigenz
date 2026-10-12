@@ -33,6 +33,13 @@ agents:
     adapter: litellm
     model: deepseek/deepseek-chat
     capabilities: [analysis, review]
+# Who plays which part, in order of preference (the next one is the fallback). Empty = automatic (by capability).
+# Edit with `multigenz tui` (Team) or `multigenz roles`. Every name must be an agent above.
+# roles:
+#   planner: [claude]        # turns the goal into a task graph (the orchestrating agent)
+#   worker: [claude]         # writes the code
+#   reviewer: []             # veto-only second opinion on each change (non-empty turns agent review on)
+#   conflict: []             # merge-conflict resolution (empty: the workers)
 execution:
   isolation: rootless-container
   network: restricted

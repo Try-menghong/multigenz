@@ -6,7 +6,8 @@ It speaks enough of the Chat Completions API (``/v1/chat/completions``, streamin
 1. the first request of a conversation is answered with ONE tool call that creates ``MOCK_FILE`` in the agent's
    working directory, using whichever shell- or write-tool the CLI offered (the arguments are built from that tool's own
    JSON schema, so no CLI-specific knowledge is hard-coded beyond a preference list of common tool names);
-2. a planning request (MultiGenz's planner prompt) is answered with a one-task JSON plan for that file;
+2. a planning request (MultiGenz's planner prompt) is answered with a one-task JSON plan for that file, and a
+   review request with an approving verdict;
 3. once the request carries a tool result it calls the CLI's completion tool if it offers one (e.g. Cline's
    ``submit_and_exit``), and otherwise answers with a short final message and stops.
 
@@ -29,6 +30,8 @@ FILE_NAME = os.environ.get("MOCK_FILE", "mock_output.txt")
 FILE_TEXT = os.environ.get("MOCK_TEXT", "written by the mock model")
 FINAL_TEXT = "Done: created " + FILE_NAME
 PLANNER_MARKER = "Produce a task DAG for the goal below"
+REVIEW_MARKER = 'Reply with ONE JSON object: {"approve"'
+REVIEW = {"approve": True, "issues": []}
 PLAN = {"schema_version": 1, "summary": "create the requested file", "tasks": [{
     "schema_version": 1, "task_id": "create-file", "title": "Create " + FILE_NAME,
     "objective": "Create the file " + FILE_NAME, "dependencies": [], "allowed_paths": [FILE_NAME],
@@ -124,6 +127,19 @@ def is_planning(body: dict) -> bool:
     return any(PLANNER_MARKER in t for t in _texts(body.get("messages") or body.get("input") or []))
 
 
+def is_review(body: dict) -> bool:
+    return any(REVIEW_MARKER in t for t in _texts(body.get("messages") or body.get("input") or []))
+
+
+def text_answer(body: dict) -> str | None:
+    """A request that wants text (a plan or a review verdict) gets it directly, without tool calls."""
+    if is_planning(body):
+        return json.dumps(PLAN)
+    if is_review(body):
+        return json.dumps(REVIEW)
+    return None
+
+
 def _norm_tools(raw: list) -> list[dict]:
     out = []
     for t in raw or []:
@@ -195,9 +211,9 @@ class Handler(BaseHTTPRequestHandler):
         msgs = [m for m in body.get("messages") or [] if isinstance(m, dict)]
         results = sum(m.get("role") == "tool" for m in msgs)
         called = {tc.get("function", {}).get("name") for m in msgs for tc in (m.get("tool_calls") or [])}
-        planning = is_planning(body)
-        call = None if planning else next_call(_norm_tools(body.get("tools")), results, called)
-        final = json.dumps(PLAN) if planning else FINAL_TEXT
+        answer = text_answer(body)
+        call = None if answer is not None else next_call(_norm_tools(body.get("tools")), results, called)
+        final = answer if answer is not None else FINAL_TEXT
         model = body.get("model", "mock-model")
         cid = "chatcmpl-" + uuid.uuid4().hex[:12]
         usage = {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
@@ -229,9 +245,9 @@ class Handler(BaseHTTPRequestHandler):
         items = [i for i in body.get("input") or [] if isinstance(i, dict)]
         results = sum(i.get("type") in ("function_call_output", "custom_tool_call_output") for i in items)
         called = {i.get("name") for i in items if i.get("type") == "function_call"}
-        planning = is_planning(body)
-        call = None if planning else next_call(_norm_tools(body.get("tools")), results, called)
-        final = json.dumps(PLAN) if planning else FINAL_TEXT
+        answer = text_answer(body)
+        call = None if answer is not None else next_call(_norm_tools(body.get("tools")), results, called)
+        final = answer if answer is not None else FINAL_TEXT
         rid = "resp_" + uuid.uuid4().hex[:12]
         model = body.get("model", "mock-model")
         if call:

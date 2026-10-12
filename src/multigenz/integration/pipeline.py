@@ -66,8 +66,9 @@ class IntegrationPipeline:
                 reports.append(rep)
                 checks.append(CheckResult(name=f"tests[{profile}]", passed=rep.passed,
                                           detail="" if rep.passed else "test profile failed"))
+        agent_review = self.policy.validation.review_with_agent or bool(self.policy.roles.reviewer)
         if all(c.passed for c in checks) and self.policy.validation.require_diff_review \
-                and self.policy.validation.review_with_agent and self.agent_reviewer:
+                and agent_review and self.agent_reviewer:
             verdict = await self.agent_reviewer.review(task, base, head)
             if verdict is not None:
                 checks.append(verdict)

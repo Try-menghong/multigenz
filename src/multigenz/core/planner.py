@@ -67,6 +67,9 @@ class AgentPlanner:
         self.emit = emit or (lambda kind, payload: None)
 
     def _planner_agents(self) -> list[str]:
+        chosen = self.svc.policy.roles.planner
+        if chosen:  # the administrator's planners, in order (the next is the fallback); no capability needed
+            return [n for n in chosen if (p := self.svc.probes.get(n)) and p.enabled and "plan" in p.modes]
         spec_caps = {"architecture"}
         out = []
         for name, p in self.svc.probes.items():
@@ -79,9 +82,14 @@ class AgentPlanner:
         self.svc.engine.check_text(goal, what="goal")
         agents = self._planner_agents()
         if not agents:
+            if pol.roles.planner:
+                raise PlanValidationError([f"none of the planners in roles.planner ({', '.join(pol.roles.planner)}) is "
+                                           "enabled with a verified read-only/plan invocation"])
             raise PlanValidationError(["no planner agent available (need an enabled agent with the 'architecture' "
                                        "capability and a verified read-only/plan invocation); pass --plan-file instead"])
-        caps = [set(p.capabilities) for p in self.svc.probes.values() if p.enabled and "code" in p.modes]
+        workers = pol.roles.worker or list(self.svc.probes)  # the planner may only ask for what the workers can do
+        caps = [set(p.capabilities) for n in workers if (p := self.svc.probes.get(n)) and p.enabled
+                and "code" in p.modes]
         all_caps = sorted(set().union(*caps)) if caps else []
         prompt = planning_prompt(goal, files, all_caps, list(pol.validation.profiles))
         tries, feedback, issues_seen = 0, None, []
