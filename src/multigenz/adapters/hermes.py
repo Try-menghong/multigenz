@@ -14,6 +14,7 @@ from multigenz.config import InvocationCfg
 
 
 class HermesAdapter(CliAdapter):
+    MODEL_FLAG = "--model"  # `agents.<name>.model`, verified in the help text before use
     BUILTIN_INVOCATIONS = [
         InvocationCfg(name="oneshot", argv=["{command}", "-z", "{prompt}"], stdin="none",
                       requires_help_tokens=["-z PROMPT", "--oneshot"]),

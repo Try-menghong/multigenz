@@ -41,7 +41,7 @@ async def test_history_dashboard_logs_and_redaction(tmp_path, repo, scenario, mo
     monkeypatch.setenv("MY_SERVICE_API_KEY", SECRET)
     with open(Path(a_attempt["log_dir"]) / "stdout.log", "a") as fh:
         fh.write(f"leaked: {SECRET}\n")
-    app = MultiGenzApp(home, policy=pol(scenario))
+    app = MultiGenzApp(home, policy=pol(scenario), start="runs")
     async with app.run_test(size=(140, 45)) as pilot:
         await pilot.pause()
         assert isinstance(app.screen, RunsScreen)
@@ -75,7 +75,7 @@ async def test_cancel_requires_confirmation_and_sets_flag(tmp_path, repo, scenar
     home = tmp_path / "mg-home"
     rid, _ = await start_run(pol(scenario), objective="g", repo=repo, home=home, plan=plan_of(T("a", "a/")), execute=False)
     st = open_store(home)
-    app = MultiGenzApp(home, policy=pol(scenario))
+    app = MultiGenzApp(home, policy=pol(scenario), start="runs")
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         await pilot.press("enter")
@@ -98,7 +98,7 @@ async def test_cancel_requires_confirmation_and_sets_flag(tmp_path, repo, scenar
 async def test_audit_action_reports_ok(tmp_path, repo, scenario):
     home = tmp_path / "mg-home"
     await finished_run(tmp_path, repo, scenario, home)
-    app = MultiGenzApp(home, policy=pol(scenario))
+    app = MultiGenzApp(home, policy=pol(scenario), start="runs")
     notes = []
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
@@ -117,7 +117,7 @@ async def test_new_run_form_creates_run_and_starts_worker(tmp_path, repo, scenar
     plan_file.write_text(plan_of(T("a", "a/")).model_dump_json())
     spawned = []
     monkeypatch.setattr("multigenz.core.driver.spawn_detached", lambda h, rid, *a: spawned.append(rid) or 4242)
-    app = MultiGenzApp(home, policy=pol(scenario))
+    app = MultiGenzApp(home, policy=pol(scenario), start="runs")
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         await pilot.press("n")
@@ -143,7 +143,7 @@ async def test_new_run_form_creates_run_and_starts_worker(tmp_path, repo, scenar
 
 async def test_new_run_form_shows_policy_rejection(tmp_path, repo, scenario):
     home = tmp_path / "mg-home"
-    app = MultiGenzApp(home, policy=pol(scenario))
+    app = MultiGenzApp(home, policy=pol(scenario), start="runs")
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         await pilot.press("n")
@@ -160,7 +160,7 @@ async def test_new_run_form_shows_policy_rejection(tmp_path, repo, scenario):
 
 
 async def test_doctor_screen_lists_checks(tmp_path, scenario):
-    app = MultiGenzApp(tmp_path / "mg-home", policy=pol(scenario))
+    app = MultiGenzApp(tmp_path / "mg-home", policy=pol(scenario), start="runs")
     async with app.run_test(size=(140, 45)) as pilot:
         await pilot.pause()
         await pilot.press("d")

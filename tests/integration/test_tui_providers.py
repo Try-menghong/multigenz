@@ -1,4 +1,4 @@
-"""TUI: add an API provider, fetch its model ids, pick one, and get an agent - all from the Team screen (m)."""
+"""TUI: add an API provider, fetch its model ids, pick one, and get an agent - all from the Team screen (k)."""
 
 import yaml
 from textual.widgets import DataTable, Input, OptionList, RadioButton, Select, Static
@@ -36,7 +36,7 @@ async def test_add_provider_fetch_models_pick_one_and_get_an_agent(tmp_path, sce
             team = app.screen
             assert isinstance(team, TeamScreen)
             await wait_for(pilot, lambda: bool(team.probes))
-            await pilot.press("m")
+            await pilot.press("k")
             await pilot.pause()
             assert isinstance(app.screen, ProvidersScreen)
             await pilot.press("n")

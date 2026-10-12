@@ -79,3 +79,25 @@ def test_roles_cli_set_clear_and_agents_enable_disable(tmp_path):
     p = load_policy(f)
     assert p.roles.worker == [] and not p.agents["cline"].enabled
     assert cli("agents", "enable", "cline", policy=f).returncode == 0 and load_policy(f).agents["cline"].enabled
+
+
+def test_set_agent_model_text_block_flow_update_and_remove():
+    from multigenz.policy_edit import set_agent_model_text
+
+    text = ("agents:\n"
+            "  claude:\n"
+            "    adapter: cli   # the Claude Code CLI\n"
+            "    command: claude\n"
+            "  oc: {adapter: cli, command: opencode}\n"
+            "roles:\n"
+            "  worker: [claude]\n")
+    t1 = set_agent_model_text(text, "claude", "opus")
+    assert '  claude:\n    model: "opus"\n    adapter: cli   # the Claude Code CLI\n' in t1
+    t2 = set_agent_model_text(t1, "claude", "sonnet")
+    assert 'model: "sonnet"' in t2 and "opus" not in t2
+    t3 = set_agent_model_text(t2, "oc", "opencode/big-pickle")
+    assert '  oc: {model: "opencode/big-pickle", adapter: cli, command: opencode}\n' in t3
+    t4 = set_agent_model_text(set_agent_model_text(t3, "oc", None), "claude", None)
+    assert t4 == text
+    with pytest.raises(ConfigError):
+        set_agent_model_text(text, "nobody", "x")

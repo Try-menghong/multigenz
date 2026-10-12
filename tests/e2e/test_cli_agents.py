@@ -45,7 +45,7 @@ def provider_files(tmp_path: Path, base_url: str) -> dict[str, tuple[str, str]]:
     (cfg / "opencode.json").write_text(json.dumps({
         "provider": {"mock": {"npm": "@ai-sdk/openai-compatible", "name": "Mock",
                               "options": {"baseURL": base_url, "apiKey": "dummy"},
-                              "models": {"mock-model": {"name": "Mock"}}}},
+                              "models": {"mock-model": {"name": "Mock"}, "mock-large": {"name": "Mock large"}}}},
         "model": "mock/mock-model"}))
     if which("cline"):  # written by `cline auth` itself, exactly as a user's login would be
         home = tmp_path / "cline-home"
@@ -134,6 +134,34 @@ def test_single_cli_plans_codes_and_integrates(tmp_path, mock, cli):
     r = run_mg(tmp_path, policy, repo, "run", f"Create the file {mock_llm.FILE_NAME}", "--repo", str(repo))
     assert_integrated(tmp_path, policy, repo, r.stdout, cli)
     assert log.read_text().count("\n") >= 2  # the CLI really talked to the (mock) model
+
+
+CHOSEN_MODEL = {"opencode": "mock/mock-large", "codex": "mock-large", "cline": "mock-large", "hermes": "mock-large"}
+
+
+@pytest.mark.parametrize("cli", ["opencode", "codex", "cline", "hermes"])
+def test_the_model_chosen_with_agents_model_is_the_one_the_cli_uses(tmp_path, mock, cli):
+    """`multigenz agents model NAME MODEL` checks the CLI's --model option, saves it, and every model request the real
+    CLI then makes asks for that model (each CLI's own config defaults to mock-model)."""
+    import yaml
+
+    if not which(cli):
+        pytest.skip(f"{cli} not installed")
+    base_url, log = mock
+    files = provider_files(tmp_path, base_url)
+    policy = write_policy(tmp_path, {cli: ["architecture", "coding"]}, files)
+    policy.write_text(yaml.safe_dump(json.loads(policy.read_text()), sort_keys=False))  # a normal, block-style file
+    repo = make_repo(tmp_path)
+    env = {"PATH": os.environ.get("PATH", "") + ":" + SEARCH, "MOCK_API_KEY": "dummy"}
+    r = run_mg(tmp_path, policy, repo, "agents", "model", cli, CHOSEN_MODEL[cli], "--policy", str(policy), env=env)
+    assert r.returncode == 0 and "option verified in its help" in r.stdout, r.stdout + r.stderr
+    assert f"model={CHOSEN_MODEL[cli]}" in run_mg(tmp_path, policy, repo, "agents", "list", env=env).stdout
+    r = run_mg(tmp_path, policy, repo, "run", f"Create the file {mock_llm.FILE_NAME}", "--repo", str(repo),
+               "--planning", "never", env=env)
+    assert_integrated(tmp_path, policy, repo, r.stdout, cli)
+    sent = [json.loads(line) for line in log.read_text().splitlines()]
+    asked = [e["body"].get("model") for e in sent if e["path"].endswith(("/chat/completions", "/responses"))]
+    assert asked and set(asked) == {"mock-large"}, [(e["path"], e["body"].get("model")) for e in sent]
 
 
 def test_different_clis_plan_and_code_in_one_run(tmp_path, mock):

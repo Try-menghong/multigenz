@@ -23,6 +23,7 @@ def _tokens(sandbox: str) -> list[str]:
 
 
 class CodexAdapter(CliAdapter):
+    MODEL_FLAG = "--model"  # `agents.<name>.model`, verified in the help text before use
     BUILTIN_INVOCATIONS = [
         InvocationCfg(name="exec-workspace-write", argv=_exec("workspace-write"), stdin="prompt",
                       help_args=["exec", "--help"], requires_help_tokens=_tokens("workspace-write"), modes=CODE_MODES),

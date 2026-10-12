@@ -136,6 +136,7 @@ or install uv (https://docs.astral.sh/uv/) and re-run this installer: uv can pro
   say "  multigenz init                # write ~/.config/multigenz/policy.yaml with the CLIs found"
   say "  multigenz doctor              # check the sandbox, git and agents"
   say "  multigenz run \"Add a health endpoint with tests\" --repo ./your-repo"
+  say "  multigenz                     # inside a repository: the interactive home (type a goal, /model, /team)"
 }
 
 usage() {

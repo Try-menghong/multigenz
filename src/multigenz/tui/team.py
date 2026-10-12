@@ -26,7 +26,7 @@ ROLE_EXPLAIN = {
     "reviewer": "Reviewers: veto-only second opinion on each validated change",
     "conflict": "Conflict resolvers: fix merge conflicts between tasks",
 }
-COLUMNS = ["agent", "on", *ROLE_NAMES, "status"]
+COLUMNS = ["agent", "on", "model", *ROLE_NAMES, "status"]
 PLANNING_ORDER = ["always", "auto", "never"]
 PLANNING_EXPLAIN = {
     "always": "the planner splits every goal into tasks first (one extra agent run per goal)",
@@ -85,7 +85,8 @@ class TeamScreen(Screen):
         Binding("e", "enable", "Enable/disable"),
         Binding("p", "planning", "Planning mode"),
         Binding("a", "add", "Add agent"),
-        Binding("m", "providers", "API models"),
+        Binding("m", "model", "Model"),
+        Binding("k", "providers", "API providers"),
         Binding("s", "save", "Save"),
         Binding("escape", "back", "Back"),
     ]
@@ -133,9 +134,11 @@ class TeamScreen(Screen):
         self.enabled = {n: a.enabled for n, a in self.pol.agents.items()}
         self.planning = self.pol.orchestrator.planning
         self.dirty = False
-        intro.update(f"{self.policy_path}  -  space: add/remove the agent in that role   [ ]: reorder   "
-                     "c: role back to automatic   e: enable/disable   p: planning mode   a: add agent   "
-                     "m: API providers/models   s: save")
+        from multigenz.tui.home import tilde
+
+        intro.update(f"{tilde(self.policy_path)}  -  space: add/remove the agent in that role   [ ]: reorder   "
+                     "c: role back to automatic   e: enable/disable   m: change model   p: planning mode   "
+                     "a: add agent   k: API providers/keys   s: save")
         self.redraw()
         if probe:
             self.run_worker(self.probe_all, exclusive=True, group="probe")
@@ -194,7 +197,7 @@ class TeamScreen(Screen):
                 status = (p.reason or "unavailable")[:60]
             if cfg.provider:
                 status = f"{cfg.provider}: {cfg.model}" + ("" if p is None or p.enabled else f" - {status}")
-            t.add_row(n, "yes" if self.enabled.get(n, True) else "no",
+            t.add_row(n, "yes" if self.enabled.get(n, True) else "no", cfg.model or "default",
                       *(self.cell(n, r, eff) for r in ROLE_NAMES), status, key=n)
         if t.row_count:
             t.cursor_coordinate = keep if keep.row < t.row_count else keep._replace(row=t.row_count - 1)
@@ -240,6 +243,9 @@ class TeamScreen(Screen):
     def action_toggle(self) -> None:
         agent, col = self._cursor()
         if agent is None:
+            return
+        if col == "model":
+            self.action_model()
             return
         if col in ("agent", "on", "status"):
             self.action_enable()
@@ -356,6 +362,17 @@ class TeamScreen(Screen):
             self.load()
 
         self.app.push_screen(AddAgentScreen(choices), done)
+
+    def action_model(self) -> None:
+        from multigenz.tui.model import ModelScreen
+
+        agent, _ = self._cursor()
+        if agent is None:
+            return
+        if self.dirty:
+            self.set_status("save (s) or undo your changes before changing a model")
+            return
+        self.app.push_screen(ModelScreen(self.policy_path, agent))
 
     def action_providers(self) -> None:
         from multigenz.tui.providers import ProvidersScreen

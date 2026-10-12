@@ -92,6 +92,56 @@ def set_enabled_text(text: str, agent: str, enabled: bool) -> str:
     return "".join(lines)
 
 
+def set_agent_model_text(text: str, agent: str, model: str | None) -> str:
+    """Set (or, with None, remove) ``agents.<agent>.model``, keeping everything else."""
+    lines = text.splitlines(keepends=True)
+    if lines and not lines[-1].endswith("\n"):
+        lines[-1] += "\n"
+    agents = _top_level_block(lines, "agents")
+    if agents is None:
+        raise ConfigError("the policy has no agents: block")
+    a_start, a_end = agents
+    header = indent = None
+    rest = ""
+    for i in range(a_start + 1, a_end):
+        m = re.match(rf"^(\s+){re.escape(agent)}\s*:(.*)$", lines[i].rstrip("\n"))
+        if m:
+            header, indent, rest = i, len(m.group(1)), m.group(2)
+            break
+    if header is None:
+        raise ConfigError(f"agent {agent!r} not found under agents:")
+    end = header + 1
+    while end < a_end and (not lines[end].strip() or lines[end].lstrip().startswith("#")
+                           or len(lines[end]) - len(lines[end].lstrip()) > indent):
+        end += 1
+    literal = json.dumps(model) if model is not None else None
+    if "{" in rest:  # flow mapping on the header line
+        line = lines[header]
+        if re.search(r"\bmodel\s*:", line):
+            if literal is None:
+                line = re.sub(r"\bmodel\s*:\s*(\"[^\"]*\"|'[^']*'|[^,}]+)\s*,?\s*", "", line, count=1)
+            else:
+                line = re.sub(r"(\bmodel\s*:\s*)(\"[^\"]*\"|'[^']*'|[^,}]+)", lambda m: m.group(1) + literal, line,
+                              count=1)
+        elif literal is not None:
+            line = line.replace("{", "{model: " + literal + ", ", 1)
+        lines[header] = line
+        return "".join(lines)
+    for i in range(header + 1, end):
+        if re.match(r"^\s+model\s*:", lines[i]):
+            if literal is None:
+                del lines[i]
+            else:
+                lines[i] = re.sub(r"^(\s+model\s*:\s*)(\"[^\"]*\"|'[^']*'|[^#\n]*?)(\s*#.*)?$",
+                                  lambda m: m.group(1) + literal + (m.group(3) or ""), lines[i].rstrip("\n")) + "\n"
+            return "".join(lines)
+    if literal is not None:
+        child = next((len(lines[i]) - len(lines[i].lstrip()) for i in range(header + 1, end)
+                      if lines[i].strip() and not lines[i].lstrip().startswith("#")), indent + 2)
+        lines.insert(header + 1, " " * child + f"model: {literal}\n")
+    return "".join(lines)
+
+
 def set_orchestrator_key_text(text: str, key: str, value: str) -> str:
     """Set ``orchestrator.<key>: <value>`` (a plain scalar), keeping everything else, comments included."""
     lines = text.splitlines(keepends=True)
@@ -128,7 +178,8 @@ def short_error(exc: BaseException) -> str:
 
 
 def save_policy_edits(path: Path, *, roles: dict[str, list[str]] | None = None,
-                      enabled: dict[str, bool] | None = None, planning: str | None = None) -> tuple[Policy, Path]:
+                      enabled: dict[str, bool] | None = None, planning: str | None = None,
+                      models: dict[str, str | None] | None = None) -> tuple[Policy, Path]:
     """Apply edits, validate with the real loader, verify the result, then replace the file (backup kept)."""
     path = Path(path).expanduser()
     if not path.is_file():
@@ -140,6 +191,8 @@ def save_policy_edits(path: Path, *, roles: dict[str, list[str]] | None = None,
         text = set_roles_text(text, roles)
     if planning is not None:
         text = set_orchestrator_key_text(text, "planning", planning)
+    for name, model in (models or {}).items():
+        text = set_agent_model_text(text, name, model or None)
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(text, encoding="utf-8")
     try:
@@ -147,6 +200,9 @@ def save_policy_edits(path: Path, *, roles: dict[str, list[str]] | None = None,
         for name, on in (enabled or {}).items():
             if pol.agents[name].enabled != on:
                 raise ConfigError(f"could not set agents.{name}.enabled to {on} in {path}")
+        for name, model in (models or {}).items():
+            if pol.agents[name].model != (model or None):
+                raise ConfigError(f"could not set agents.{name}.model in {path}")
         if planning is not None and pol.orchestrator.planning != planning:
             raise ConfigError(f"could not set orchestrator.planning to {planning!r} in {path}")
         if roles is not None:

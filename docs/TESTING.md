@@ -7,7 +7,7 @@ pytest -m acceptance         # AT-01 .. AT-16
 pytest -m e2e                # scenarios A, B (repaired / unfixable), C
 pytest tests/unit tests/contract tests/integration tests/security
 scripts/verify_clean_install.sh   # builds the wheel, installs it into a FRESH venv, runs the whole suite against it
-pytest -m cli_agents         # real Codex / opencode / Cline binaries driven end to end against a local mock model
+pytest -m cli_agents         # real Codex / opencode / Cline / Hermes binaries end to end against a local mock model
 MULTIGENZ_TEST_INSTALLER=1 pytest tests/integration/test_installer.py   # real install into a throwaway HOME (downloads deps)
 ```
 Tests marked `needs_userns` are skipped (not faked) when unprivileged user namespaces are unavailable. `cli_agents` tests
@@ -53,6 +53,17 @@ FastAPI service), `tests/security` (regressions), `tests/contract`, `tests/suppo
   and LiteLLM, `test_api_provider_models_become_a_coding_agent_and_a_text_planner`: everything set up through
   `multigenz providers`, the mock provider refuses requests without the key, the planner model plans and the coder model
   builds through opencode, every call carries the key and the key appears nowhere under MultiGenz's state directory.
+- **Models.** `tests/unit/test_models.py` (the model option is used only when the CLI's help shows it — as a whole option,
+  not a look-alike like `--model-provider`; a CLI without one is refused before anything is saved; an admin invocation
+  may place `{model}` itself; choices are read from `claude --help` and `opencode models`; every shipped CLI's recorded
+  help lists `--model`) and, with the real binaries, `test_the_model_chosen_with_agents_model_is_the_one_the_cli_uses`
+  for opencode, Codex, Cline and Hermes: the model is set with `multigenz agents model` (each CLI's own config defaults
+  to a different model) and every model request the CLI then sends asks for the chosen one.
+- **Home screen and pet.** `tests/unit/test_home.py` (the pet's shape and blink frame, the team summary with models,
+  command hints, Tab completion, repository detection) and `tests/integration/test_tui_home.py` (pilot: /help, an
+  unknown command, /planning, /repo refusing a non-repository, history, /team, /runs and back; /model directly, through
+  the agent and model pickers and from the Team screen's `m`, a CLI without a model option refused; a goal typed at the
+  prompt runs through the detached worker to a merged commit on its run branch while the checkout stays untouched).
 - `tests/contract/fixtures/help/` holds the real `--help` output of the CLI versions the built-in invocations were written
   for (agy's from a user's machine); the contract tests fail if a shipped invocation no longer verifies against them.
 

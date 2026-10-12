@@ -13,6 +13,7 @@ from multigenz.config import InvocationCfg
 
 
 class ClineAdapter(CliAdapter):
+    MODEL_FLAG = "--model"  # `agents.<name>.model`, verified in the help text before use
     BUILTIN_INVOCATIONS = [
         InvocationCfg(name="yolo", argv=["{command}", "--yolo"], stdin="prompt",
                       requires_help_tokens=["--yolo", "[prompt]"], modes=CODE_MODES),

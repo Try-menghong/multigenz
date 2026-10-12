@@ -5,7 +5,7 @@ from textual.widgets import DataTable, Static
 
 from multigenz.config import load_policy
 from multigenz.tui.app import ConfirmScreen, MultiGenzApp, RunsScreen
-from multigenz.tui.team import AddAgentScreen, TeamScreen
+from multigenz.tui.team import COLUMNS, AddAgentScreen, TeamScreen
 from tests.support.helpers import scripted_policy
 
 
@@ -40,8 +40,7 @@ async def goto(pilot, screen, agent, col):
 
     t = screen.query_one("#matrix", DataTable)
     rows = [str(k.value) for k in t.rows]
-    t.cursor_coordinate = Coordinate(rows.index(agent), ["agent", "on", "planner", "worker", "reviewer", "conflict",
-                                                           "status"].index(col))
+    t.cursor_coordinate = Coordinate(rows.index(agent), COLUMNS.index(col))
     await pilot.pause()
 
 
@@ -87,7 +86,7 @@ async def test_assign_reorder_disable_and_save(tmp_path, scenario):
 
 async def test_unsaved_changes_need_confirmation_and_role_back_to_automatic(tmp_path, scenario):
     f = write_policy(tmp_path, scenario)
-    app = MultiGenzApp(tmp_path / "home", policy=load_policy(f), policy_path=f)
+    app = MultiGenzApp(tmp_path / "home", policy=load_policy(f), policy_path=f, start="runs")
     async with app.run_test(size=(160, 50)) as pilot:
         await pilot.pause()
         assert isinstance(app.screen, RunsScreen)

@@ -84,9 +84,9 @@ Edit roles without touching YAML:
 
 ![Team screen: Claude plans, Codex then opencode code, Cline reviews](images/tui-team.png)
 
-- `multigenz tui` → `t` (or `multigenz tui --team`): a grid of agents × roles. `space` adds/removes the agent in the
-  role under the cursor, `[`/`]` reorder, `c` puts a role back to automatic, `e` enables/disables an agent, `a` adds an
-  agent from a preset, `s` saves. `#1`/`#2` show the order, `auto` who automatic selection would use, `n/a` that the
+- `multigenz` → `/team` (or `ctrl+t`, or `multigenz tui --team`): a grid of agents × roles. `space` adds/removes the
+  agent in the role under the cursor, `[`/`]` reorder, `c` puts a role back to automatic, `e` enables/disables an agent,
+  `m` changes the agent's model, `a` adds an agent from a preset, `k` opens the API providers, `s` saves. `#1`/`#2` show the order, `auto` who automatic selection would use, `n/a` that the
   agent has no verified invocation for that role.
 - `multigenz roles` (show), `multigenz roles set worker codex opencode`, `multigenz roles clear reviewer|all`,
   `multigenz agents enable|disable <name>`.
@@ -94,11 +94,37 @@ Edit roles without touching YAML:
 Both rewrite only the `roles:` block and `enabled:` flags (comments are kept), validate the result with the policy
 loader before replacing the file, and keep the previous version as `policy.yaml.bak`.
 
+### Models: which model each agent uses
+`agents.<name>.model` picks the model. For a CLI agent MultiGenz passes it as `--model <name>` — but only after the
+installed binary's own `--help` shows that option for every invocation it will use (Claude Code, Codex, opencode, Cline,
+Hermes and agy all list it today). If the help does not show it, the agent is disabled with that reason instead of
+quietly running its default model; an administrator-defined invocation can instead place `{model}` in its `argv`.
+For an API-provider agent the model is the provider's model id; without a model, a CLI uses its own default.
+```bash
+multigenz agents model claude                 # show
+multigenz agents model claude --list          # choices, asked from the tool: claude --help aliases (fable, opus,
+                                              # sonnet), `opencode models`, a provider's /models; others: type a name
+multigenz agents model claude opus            # check the CLI accepts a model, then save (policy.yaml.bak kept)
+multigenz agents model claude --clear         # back to the CLI's default
+```
+In the TUI: `/model` (pick an agent, then a model; type any name for CLIs that cannot list theirs),
+`/model codex gpt-5-codex` directly, `/model codex default`, or `m` on the Team screen. Only `agents.<name>.model` is
+rewritten; the file is validated before it replaces the old one.
+
+### The interactive home screen
+`multigenz` with no arguments on a terminal opens the home screen: the pet, the repository goals run in (the git
+repository around the current directory; `/repo PATH` changes it), the policy file, the planning mode and the team with
+each agent's model, the last runs, and a prompt. Text that does not start with `/` is a goal: it starts a run exactly
+like `multigenz run "<goal>" --repo <repo> --detach` and opens its dashboard. Commands: `/model`, `/team`, `/agents`,
+`/providers`, `/planning`, `/repo`, `/runs`, `/doctor`, `/init`, `/help`, `/clear`, `/quit` (`/exit`). Tab completes
+commands, agent names and planning modes; ↑/↓ recall earlier lines; `ctrl+t` Team, `ctrl+r` runs, `ctrl+q` quits.
+Without a terminal (a pipe, CI), `multigenz` prints its help instead.
+
 ### API providers: use any model with an API key
 Besides the subscription CLIs, an agent can use a model from an API provider: OpenRouter, OpenAI, Anthropic, DeepSeek,
 Groq, Mistral, Together, xAI, Gemini, a local Ollama / LM Studio, or any OpenAI-compatible URL.
 
-In the TUI: Team screen → `m` → `n` (add provider: preset, endpoint, key variable, the key itself - hidden) → MultiGenz
+In the TUI: `/providers` (or Team screen → `k`) → `n` (add provider: preset, endpoint, key variable, the key itself - hidden) → MultiGenz
 fetches the provider's model ids (`GET <endpoint>/models` with the key) → type to filter, Enter to pick → choose
 *coding agent* or *text only* → Add agent. Then give the new agent a role on the Team screen. The same from the shell:
 ```bash

@@ -22,5 +22,6 @@ EXPERIMENTAL_INVOCATIONS = [
 
 class AntigravityAdapter(CliAdapter):
     BUILTIN_INVOCATIONS: list = []
+    MODEL_FLAG = "--model"  # listed by agy --help 1.3.3; only used once the installed binary's help shows it
     NO_INVOCATION_HINT = ("no invocation enabled: run `multigenz agents add agy` to add EXPERIMENTAL candidate "
                           "invocations (not run-tested), then check them with `multigenz agents run`")

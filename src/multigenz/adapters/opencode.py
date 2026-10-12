@@ -15,6 +15,7 @@ from multigenz.config import InvocationCfg
 
 
 class OpencodeAdapter(CliAdapter):
+    MODEL_FLAG = "--model"  # `agents.<name>.model`, verified in the help text before use
     BUILTIN_INVOCATIONS = [
         InvocationCfg(name="run-auto", argv=["{command}", "run", "--auto"], stdin="prompt",
                       help_args=["run", "--help"], requires_help_tokens=["--auto", "message"], modes=CODE_MODES),

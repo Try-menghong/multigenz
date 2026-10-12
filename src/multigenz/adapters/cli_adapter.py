@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import shutil
 import time
 from collections.abc import AsyncIterator
@@ -59,10 +60,18 @@ async def _capture(argv: list[str], timeout: float = 15.0) -> tuple[int | None, 
 MAX_ARG_PROMPT = 120_000  # Linux refuses a single argv string over 128 KiB (MAX_ARG_STRLEN)
 
 
+def has_flag(help_text: str, flag: str) -> bool:
+    """``flag`` appears in the help as a whole option (``--model``, not ``--model-provider``)."""
+    return re.search(rf"(?<![\w-]){re.escape(flag)}(?![\w-])", help_text) is not None
+
+
 class CliAdapter(AgentAdapter):
     provider_class = "cli"
     BUILTIN_INVOCATIONS: list[InvocationCfg] = []
     NO_INVOCATION_HINT: str | None = None
+    # How this CLI is told which model to use (``agents.<name>.model``). Used only after the flag is found in the
+    # help text of every verified invocation; admin-defined invocations may place ``{model}`` themselves instead.
+    MODEL_FLAG: str | None = None
 
     def __init__(self, name: str, cfg: AgentCfg, *, runner: CommandRunner | None = None):
         self.name = name
@@ -72,6 +81,8 @@ class CliAdapter(AgentAdapter):
         self._probe: AdapterProbe | None = None
         self._verified: list[InvocationCfg] = []
         self._binary: str | None = None
+        self._pass_model = False
+        self.model_problem: str | None = None  # set by probe() when a model is configured but cannot be passed
         self._results: dict[str, AgentResult] = {}
         self._outputs: dict[str, list[str]] = {}
         self._cancels: dict[str, asyncio.Event] = {}
@@ -123,7 +134,22 @@ class CliAdapter(AgentAdapter):
                 verified.append(inv)
         self._verified = verified
         modes = sorted({m for inv in verified for m in inv.modes})
-        if not verified:
+        model_problem = None
+        if verified and self.cfg.model and self.cfg.provider is None:
+            placed = all("{model}" in " ".join(inv.argv) for inv in verified)
+            flag_ok = bool(self.MODEL_FLAG) and all(has_flag(help_cache[tuple(inv.help_args)], self.MODEL_FLAG)
+                                                    for inv in verified)
+            if placed or flag_ok:
+                self._pass_model = True
+            else:
+                model_problem = (f"model {self.cfg.model!r} requested, but this CLI's help shows no way to choose a "
+                                 f"model ({self.MODEL_FLAG or 'no model flag known'}); remove the model or add "
+                                 "{model} to an invocation")
+        self.model_problem = model_problem
+        if model_problem:
+            self._probe = AdapterProbe(name=self.name, enabled=False, binary=binary, version=version,
+                                       reason=model_problem, warnings=notes)
+        elif not verified:
             self._probe = AdapterProbe(name=self.name, enabled=False, binary=binary, version=version,
                                        reason="no invocation verified against the binary's help output",
                                        warnings=notes)
@@ -143,6 +169,11 @@ class CliAdapter(AgentAdapter):
         raise AdapterUnavailable(f"{self.name}: no verified invocation for mode {mode!r}")
 
     # -- execution -----------------------------------------------------------------
+    @property
+    def passes_model(self) -> bool:
+        """After probe(): the configured model is given to the CLI (flag verified, or ``{model}`` in the argv)."""
+        return self._pass_model
+
     def _render_argv(self, inv: InvocationCfg, task: TaskSpec, ctx: ExecutionContext, prompt: str = "") -> list[str]:
         assert self.runner is not None and self._binary is not None
         subs = {
@@ -153,11 +184,15 @@ class CliAdapter(AgentAdapter):
             "task_id": task.task_id,
             "workspace": self.runner.workspace_path(ctx),
         }
+        if self._pass_model and self.cfg.model:
+            subs["model"] = self.cfg.model
         out = []
         for a in inv.argv:
             for k, v in subs.items():
                 a = a.replace("{" + k + "}", v)
             out.append(a)
+        if self._pass_model and self.cfg.model and not any("{model}" in a for a in inv.argv) and self.MODEL_FLAG:
+            out += [self.MODEL_FLAG, self.cfg.model]
         return out
 
     async def execute(self, task: TaskSpec, context: ExecutionContext) -> AsyncIterator[AgentEvent]:

@@ -16,6 +16,7 @@ READONLY_TOOLS = "Read,Glob,Grep"
 
 
 class ClaudeAdapter(CliAdapter):
+    MODEL_FLAG = "--model"  # `agents.<name>.model`, verified in the help text before use
     BUILTIN_INVOCATIONS = [
         InvocationCfg(
             name="print-accept-edits",

@@ -15,8 +15,9 @@ from multigenz import __version__
 from multigenz.config import Policy, default_state_home, load_policy
 from multigenz.errors import MultiGenzError
 
-app = typer.Typer(name="multigenz", help="Local-first autonomous multi-agent software-development orchestrator.",
-                  no_args_is_help=True, add_completion=False)
+app = typer.Typer(name="multigenz", help="Local-first autonomous multi-agent software-development orchestrator. "
+                  "Without a command (on a terminal) it opens the interactive home screen.",
+                  invoke_without_command=True, add_completion=False)
 agents_app = typer.Typer(help="Inspect and exercise agent adapters.", no_args_is_help=True)
 app.add_typer(agents_app, name="agents")
 runs_app = typer.Typer(help="Inspect and control runs.", no_args_is_help=True)
@@ -43,6 +44,28 @@ def _load(policy: Path | None) -> Policy:
 def _fail(msg: str, code: int = 1) -> typer.Exit:
     typer.secho(msg, fg=typer.colors.RED, err=True)
     return typer.Exit(code)
+
+
+def _open_tui(policy: Path | None, start: str) -> None:
+    from multigenz.tui.app import MultiGenzApp
+
+    pol, err = None, None
+    try:
+        pol = load_policy(policy)
+    except MultiGenzError as exc:
+        err = str(exc)
+    MultiGenzApp(default_state_home(), policy=pol, policy_error=err, policy_path=policy, start=start).run()
+
+
+@app.callback()
+def main_callback(ctx: typer.Context) -> None:
+    """``multigenz`` alone: the interactive home screen on a terminal, the help text otherwise."""
+    if ctx.invoked_subcommand is not None:
+        return
+    if sys.stdin.isatty() and sys.stdout.isatty():
+        _open_tui(None, "home")
+    else:
+        typer.echo(ctx.get_help())
 
 
 @app.command()
@@ -111,7 +134,8 @@ def agents_list(policy: PolicyOpt = None, json_out: Annotated[bool, typer.Option
             rows.append({"name": name, "adapter": pol.agents[name].adapter, "enabled": p.enabled,
                          "reason": p.reason, "invocation": p.invocation, "modes": p.modes,
                          "capabilities": p.capabilities or sorted(pol.agents[name].capabilities),
-                         "version": p.version})
+                         "version": p.version, "model": pol.agents[name].model,
+                         "provider": pol.agents[name].provider})
         return rows
 
     rows = asyncio.run(go())
@@ -120,7 +144,8 @@ def agents_list(policy: PolicyOpt = None, json_out: Annotated[bool, typer.Option
         return
     for r in rows:
         state = "enabled " if r["enabled"] else "disabled"
-        typer.echo(f"{r['name']:<12} {state} {r['adapter']:<8} caps={','.join(r['capabilities'])}")
+        model = (f"{r['provider']}: " if r["provider"] else "") + (r["model"] or "default model")
+        typer.echo(f"{r['name']:<12} {state} {r['adapter']:<8} model={model}  caps={','.join(r['capabilities'])}")
         typer.echo(f"{'':<12} {r['invocation'] or r['reason']}")
 
 
@@ -193,6 +218,47 @@ def agents_enable(name: str, policy: PolicyOpt = None) -> None:
 def agents_disable(name: str, policy: PolicyOpt = None) -> None:
     """Disable an agent in the policy file (it is never used, whatever its roles)."""
     _save(_policy_file(policy), enabled={name: False})
+
+
+@agents_app.command("model")
+def agents_model(
+    name: Annotated[str, typer.Argument(help="Agent name from the policy.")],
+    model: Annotated[Optional[str], typer.Argument(help="Model to use, e.g. opus, sonnet, gpt-5-codex, "
+                                                        "opencode/big-pickle, a provider's model id.")] = None,
+    clear: Annotated[bool, typer.Option("--clear", help="Use the CLI's own default model again.")] = False,
+    list_: Annotated[bool, typer.Option("--list", "-l", help="List the models this agent can use (asked from the "
+                                                             "tool itself where it can list them).")] = False,
+    policy: PolicyOpt = None,
+) -> None:
+    """Show or change which model an agent uses (Claude Code, Codex, opencode, Cline, Hermes, API providers)."""
+    from multigenz.models import model_choices, set_model
+
+    path = _policy_file(policy)
+    pol = _load(path)
+    if name not in pol.agents:
+        raise _fail(f"no agent {name!r} in the policy (multigenz agents list)", 2)
+    cfg = pol.agents[name]
+    if list_:
+        choices = asyncio.run(model_choices(name, cfg, pol))
+        for m in choices.models:
+            typer.echo(("* " if m == cfg.model else "  ") + m)
+        typer.secho(choices.note, fg=typer.colors.BLUE, err=True)
+        return
+    if model is None and not clear:
+        typer.echo(f"{name}: {cfg.model or 'default (the CLI chooses)'}")
+        typer.secho(f"change it: multigenz agents model {name} MODEL   (list: --list, back to default: --clear)",
+                    fg=typer.colors.BLUE, err=True)
+        return
+    if model is not None and clear:
+        raise _fail("give a model or --clear, not both", 2)
+    target = None if clear else model.strip()
+    if target is not None and not target:
+        raise _fail("empty model name", 2)
+    check, saved = asyncio.run(set_model(path, name, target))
+    if saved is None:
+        raise _fail(f"not saved: {check.message}", 2)
+    typer.echo(f"saved {path} (previous version: {path.name}.bak)")
+    typer.echo(check.message)
 
 
 ROLE_HELP = {
@@ -664,18 +730,11 @@ def runs_resume(run_id: str, json_out: Annotated[bool, typer.Option("--json")] =
 
 @app.command()
 def tui(policy: PolicyOpt = None,
-        team: Annotated[bool, typer.Option("--team", help="Open the Team screen (who plans, codes, reviews).")] = False
+        team: Annotated[bool, typer.Option("--team", help="Open the Team screen (who plans, codes, reviews).")] = False,
+        runs: Annotated[bool, typer.Option("--runs", help="Open the run list.")] = False,
         ) -> None:
-    """Interactive dashboard: run history, live task states, redacted logs, cancel, doctor, team (roles)."""
-    from multigenz.tui.app import MultiGenzApp
-
-    pol, err = None, None
-    try:
-        pol = load_policy(policy)
-    except MultiGenzError as exc:
-        err = str(exc)
-    MultiGenzApp(default_state_home(), policy=pol, policy_error=err, policy_path=policy,
-                 start="team" if team else "runs").run()
+    """Interactive TUI: home screen with a prompt and /commands, runs, live task states, logs, team, models."""
+    _open_tui(policy, "team" if team else "runs" if runs else "home")
 
 
 @runs_app.command("logs")

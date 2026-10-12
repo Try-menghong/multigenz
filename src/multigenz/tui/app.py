@@ -1,4 +1,5 @@
-"""Textual TUI: run history, run dashboard with live events, redacted log viewer, doctor."""
+"""Textual TUI: interactive home (pet, team, prompt, slash commands), run history, run dashboard with live events,
+redacted log viewer, doctor, team, models and API providers."""
 
 from __future__ import annotations
 
@@ -237,6 +238,7 @@ class DoctorScreen(Screen):
 
 class RunsScreen(Screen):
     BINDINGS = [
+        Binding("escape", "back", "Back"),
         Binding("o", "open", "Open (or Enter)"),
         Binding("n", "new", "New run"),
         Binding("t", "team", "Team (roles)"),
@@ -296,6 +298,10 @@ class RunsScreen(Screen):
     def action_doctor(self) -> None:
         self.app.push_screen(DoctorScreen())
 
+    def action_back(self) -> None:
+        if len(self.app.screen_stack) > 2:  # opened from the home screen (the bottom one is Textual's default)
+            self.app.pop_screen()
+
     def action_team(self) -> None:
         from multigenz.tui.team import TeamScreen
 
@@ -305,8 +311,27 @@ class RunsScreen(Screen):
 class MultiGenzApp(App):
     TITLE = "MultiGenz"
     CSS = """
-    #confirm, #new-run, #add-agent, #add-provider { width: 80%; height: auto; padding: 1 2; border: thick $accent; background: $surface; }
-    ConfirmScreen, NewRunScreen, AddAgentScreen, AddProviderScreen { align: center middle; }
+    #confirm, #new-run, #add-agent, #add-provider, #pick-agent {
+        width: 80%; height: auto; padding: 1 2; border: thick $accent; background: $surface;
+    }
+    ConfirmScreen, NewRunScreen, AddAgentScreen, AddProviderScreen, PickAgentScreen { align: center middle; }
+    #welcome {
+        height: auto; border: round $accent; border-title-color: $accent; border-title-style: bold;
+        padding: 0 1; margin: 0 1;
+    }
+    #welcome-top { height: auto; }
+    #mascot { width: 21; height: 5; margin: 1 2 0 0; }
+    #home-info { width: 1fr; height: auto; margin-top: 1; }
+    #home-team { height: auto; margin-top: 1; }
+    #home-recent { height: auto; }
+    #home-log { height: 1fr; margin: 0 1; background: $background; }
+    #home-hints { height: auto; max-height: 13; margin: 0 2; padding: 0 1; border-left: tall $accent; }
+    #home-input { margin: 0 1; border: round $accent; }
+    #pa-agents { height: auto; max-height: 16; }
+    #ms-title, #ms-note { height: auto; padding: 0 1; color: $text-muted; }
+    #ms-models { height: 1fr; border: solid $primary; }
+    #ms-buttons { height: auto; }
+    #ms-status { height: auto; padding: 0 1; color: $warning; }
     #prov-table { height: auto; max-height: 60%; }
     #prov-intro, #mp-title { height: auto; padding: 0 1; color: $text-muted; }
     #mp-models { height: 1fr; border: solid $primary; }
@@ -324,7 +349,7 @@ class MultiGenzApp(App):
     """
 
     def __init__(self, home: Path, policy=None, policy_error: str | None = None, policy_path: Path | None = None,
-                 start: str = "runs"):
+                 start: str = "home", repo: Path | None = None):
         super().__init__()
         from multigenz.config import config_policy_path, default_policy_path
 
@@ -333,10 +358,16 @@ class MultiGenzApp(App):
         self.policy_error = policy_error
         self.policy_path = Path(policy_path or default_policy_path() or config_policy_path()).expanduser()
         self.start = start
+        self.repo = Path(repo or Path.cwd())  # where goals typed on the home screen run
         self.redactor = Redactor.from_environ(os.environ)
 
     def on_mount(self) -> None:
-        self.push_screen(RunsScreen())
+        if self.start == "runs":
+            self.push_screen(RunsScreen())
+        else:
+            from multigenz.tui.home import HomeScreen
+
+            self.push_screen(HomeScreen())
         if self.start == "team":
             from multigenz.tui.team import TeamScreen
 

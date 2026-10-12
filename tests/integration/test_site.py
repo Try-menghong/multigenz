@@ -75,3 +75,13 @@ def test_page_in_a_real_browser(served):
         assert v["cmd"] == want and v["clipboard"] == want   # the copied command points at this site's installer
         assert v["uninstall"].endswith("bash -s -- --uninstall")
     assert views["desktop-light"]["bg"] != views["desktop-dark"]["bg"]
+
+
+def test_logo_and_favicon_are_the_pet_drawn_by_the_code():
+    import urllib.parse
+
+    from multigenz.tui.mascot import mascot_svg
+
+    assert f'<a class="mark" href="#top">{mascot_svg(title=None, scale=2)}multi<span>genz</span></a>' in HTML
+    favicon = "data:image/svg+xml," + urllib.parse.quote(mascot_svg())
+    assert f'<link rel="icon" type="image/svg+xml" href="{favicon}">' in HTML
