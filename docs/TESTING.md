@@ -49,7 +49,19 @@ FastAPI service), `tests/security` (regressions), `tests/contract`, `tests/suppo
 | 07 restart reconciliation | `test_at_07_…` | 15 logs redacted | `test_at_15_…` |
 | 08 failed agent ≠ success | `test_at_08_…` | 16 auditable/replayable transitions | `test_at_16_…` |
 
-## Recorded results (2026-10-11)
+## Recorded results (2026-10-12)
+| run | where | result |
+|---|---|---|
+| full suite, dev tree, Python 3.13, with `MULTIGENZ_TEST_INSTALLER=1` and shellcheck | this container | 283 passed, 1 skipped (Codex opt-in) |
+| `scripts/verify_clean_install.sh` (wheel in a fresh Python 3.12.3 venv) | this container | 282 passed, 2 skipped (Codex opt-in; install-from-checkout needs `src/`) |
+
+Both include the real opencode 1.19.0 and Cline 3.0.70 binaries (`tests/e2e/test_cli_agents.py`, against the local mock
+model), the installer (`curl | bash` from the served page, install/upgrade/uninstall into throwaway HOMEs) and the
+download page in Chromium. The installer was also run by hand from GitHub (`MULTIGENZ_REF=<branch>`) with uv and with
+the system Python. Not covered: Codex inside MultiGenz (needs your opt-in), agy (not installable here), real providers
+behind opencode/Cline.
+
+## Earlier results (2026-10-11)
 `scripts/verify_clean_install.sh` — wheel built, installed into a brand-new Python 3.12.3 virtualenv, the whole suite run
 against the *installed* package (the script asserts `multigenz` resolves to site-packages, not `src/`):
 

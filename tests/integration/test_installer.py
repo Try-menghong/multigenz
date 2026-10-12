@@ -63,6 +63,7 @@ def test_bad_source_fails_loudly_without_linking(tmp_path):
 
 @pytest.mark.skipif(os.environ.get("MULTIGENZ_TEST_INSTALLER") != "1",
                     reason="downloads dependencies; set MULTIGENZ_TEST_INSTALLER=1")
+@pytest.mark.skipif(not (REPO_ROOT / "src").is_dir(), reason="needs a source checkout to install from")
 def test_full_install_from_checkout_then_init_and_doctor(tmp_path):
     home = tmp_path / "home"
     home.mkdir()

@@ -13,7 +13,7 @@ uv pip install --python "$work/venv/bin/python" "$work"/dist/multigenz-*.whl pyt
 
 # tests only (no src/): any import of multigenz must resolve to the installed wheel
 mkdir "$work/checkout"
-cp -r "$repo/tests" "$repo/config" "$repo/pyproject.toml" "$work/checkout/"
+cp -r "$repo/tests" "$repo/config" "$repo/pyproject.toml" "$repo/install.sh" "$repo/site" "$repo/scripts" "$work/checkout/"
 cd "$work/checkout"
 "$work/venv/bin/python" - <<'PY'
 import multigenz, pathlib, sys
