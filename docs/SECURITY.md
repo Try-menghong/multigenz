@@ -29,7 +29,12 @@ policy and database. Untrusted: agent processes, their output, repository conten
 - **A granted credential is visible to that agent.** It is redacted from everything MultiGenz records, but the agent
   process (and anything it writes into its worktree, which is preserved) can contain it. Worktrees live in a 0700 tree.
 - **Agent-written files in preserved worktrees** are kept for diagnosis; they are not scanned or redacted.
-- **The container backend and real CLI agents have not been exercised live** in this repository's test environment.
+- **The container backend has not been exercised live** in this repository's test environment. Real agent CLIs have:
+  Claude Code with a real model (by a user), opencode and Cline against a local scripted model.
+- **Codex with `--trust-outer-sandbox` runs with its own sandbox off.** Its commands are then confined only by the
+  MultiGenz sandbox (read-only system, one writable worktree, host network). It is never enabled without that flag.
+- **opencode's `plan` agent can still write files** through its shell tool; read-only roles are safe only because they run
+  on a disposable export of the tree, never on a task worktree.
 - Spend on CLI/subscription agents is unmeasurable and reported as *unknown*; the budget is enforced for measurable API calls only.
 - Deterministic review heuristics (deleted tests, skip markers, removed assertions) are not a substitute for human review of the
   integration branch before you merge it.

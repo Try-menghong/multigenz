@@ -135,12 +135,17 @@ def check_optional() -> list[Check]:
 
 
 async def run_doctor(policy: Policy | None, *, policy_error: str | None = None,
-                     home: Path | None = None) -> list[Check]:
+                     home: Path | None = None, policy_file: Path | None | bool = True) -> list[Check]:
+    """``policy_file``: the file the policy came from, ``None`` if built-in defaults were used (no file found)."""
     checks = [check_python(), check_git(), check_sqlite(), check_home(home)]
     if policy is None:
         checks.append(Check("policy", False, policy_error or "policy invalid"))
         return checks
-    checks.append(Check("policy", True, "valid"))
+    if policy_file is None:
+        checks.append(Check("policy file", False, "none found ($MULTIGENZ_POLICY, ~/.config/multigenz/policy.yaml); "
+                            "using built-in defaults (no agents). Run `multigenz init` to create one",
+                            required=False))
+    checks.append(Check("policy", True, "valid" + (f" ({policy_file})" if isinstance(policy_file, Path) else "")))
     checks += await check_isolation(policy)
     checks += await check_adapters(policy)
     checks.append(check_validation(policy))

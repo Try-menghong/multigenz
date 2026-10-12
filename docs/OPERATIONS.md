@@ -16,21 +16,52 @@ unsandboxed regardless).
 
 ### Agents
 `adapter: cli` agents run in the sandbox. **No CLI flag is assumed.** An invocation is enabled only when every string in its
-`requires_help_tokens` appears in the binary's own help output. Claude ships two candidate invocations (checked against
-`claude --help` at probe time); Codex and Antigravity have none, so they stay disabled until you add `invocations`:
+`requires_help_tokens` appears in the binary's own help output (`help_args`, default `--help`). Built-in candidates:
+
+| Adapter (by agent name or command basename) | Built-in invocations | Verified with |
+|---|---|---|
+| `claude` | `--print --permission-mode acceptEdits` / `plan` | real model runs |
+| `opencode` | `run --auto` (code) / `run --agent plan` (read-only roles) | real binary + local scripted model, in the sandbox |
+| `cline` | `--yolo` (code) / `--plan` (read-only roles) | real binary + local scripted model, in the sandbox |
+| `codex` | none: written only by `multigenz agents add codex --trust-outer-sandbox` | help text only |
+| `antigravity` / `agy` | none: `multigenz agents add agy` writes experimental candidates | help text only |
+
+All of them read the prompt on stdin. The easy way to configure them is `multigenz init` (all supported CLIs found on
+PATH) or `multigenz agents add <preset>`; both validate the result with the real policy loader and keep a `.bak` copy.
+`multigenz agents presets` shows each preset's test status and install hint.
+
+**Codex.** `codex exec` works unattended, but Codex's own sandbox needs bubblewrap to create a nested user namespace,
+which fails inside MultiGenz's sandbox (`bwrap: setting up uid map: Operation not permitted`; the legacy Landlock mode
+also requires bubblewrap in Codex 0.162). Every shell command Codex runs then fails, so inside MultiGenz Codex can only
+work with its inner sandbox off (`--sandbox danger-full-access`), confined by the MultiGenz sandbox alone. That is your
+decision: `multigenz agents add codex --trust-outer-sandbox`. This path has not been executed in development.
+
+**Logins.** Presets hand an agent its own login by name: environment variables (`credentials.env`) and files mounted
+**read-only** at the same path under the sandbox home (`credentials.files`, e.g. `~/.codex/auth.json` →
+`/home/agent/.codex/auth.json`). Missing ones are skipped. A CLI that wants to rewrite its login file inside the sandbox
+(Cline prints `failed to persist selection`) keeps working; if a login token expires, refresh it by running the CLI once on
+the host.
+
+**Installs outside /usr.** For npm-installed CLIs the sandbox automatically exposes the `node_modules` root the binary
+lives in and the directory of its `#!/usr/bin/env node` interpreter (never a whole prefix such as `~/.local`). Anything
+else goes in `execution.readonly_paths`.
+
+Any other CLI with a non-interactive mode can be added by hand:
 ```yaml
 agents:
-  codex:
+  my-agent:
     adapter: cli
-    command: codex
+    command: my-agent
     capabilities: [coding, testing]
     invocations:
       - name: exec
-        argv: ["{command}", "<flags>", "{prompt_file}"]   # placeholders: {command} {prompt_file} {task_file} {task_id} {workspace}
-        stdin: none                                      # or `prompt` to pipe the prompt on stdin
+        argv: ["{command}", "<flags>"]                   # placeholders: {command} {prompt_file} {task_file} {task_id} {workspace}
+        stdin: prompt                                    # or `none` and pass {prompt_file}
+        help_args: ["--help"]                            # e.g. ["exec", "--help"] for a subcommand
         requires_help_tokens: ["<each flag used>"]
-        modes: [code, conflict]                          # which roles this invocation may serve
+        modes: [code, conflict]                          # roles: code, conflict, plan, review, analysis
 ```
+The planner needs an agent with the `architecture` capability and a read-only (`plan`) invocation.
 `credentials.env` / `credentials.files` grant a *named* host variable/file to *that agent only*; nothing else from the host
 environment is ever passed. `adapter: litellm` agents run in-process for planning/review text only and cannot produce commits.
 
@@ -67,6 +98,15 @@ snapshots stay on their own branches. Review or merge `integration` yourself —
 kernel start time), snapshots any interrupted work in Git, settles half-finished merges by asking Git, resumes tasks that were
 mid-validation at validation, and only then schedules new attempts. `multigenz runs audit <id>` replays the event log and
 checks sequence, hash chain, transition legality and equality with the stored state.
+
+## Installer and download page
+`install.sh` (also served as `/install` by the page in `site/`) installs into a private virtualenv in `~/.multigenz` and
+links `~/.local/bin/multigenz`; see `bash install.sh --help` for the overrides (`MULTIGENZ_REF`, `MULTIGENZ_SOURCE`, ...).
+It never uses sudo and only appends one `PATH` line to `~/.bashrc`/`~/.zshrc` (skip with `MULTIGENZ_NO_MODIFY_PATH=1`).
+To publish the page: enable GitHub Pages with "GitHub Actions" as the source and get `site/`, `install.sh` and
+`.github/workflows/pages.yml` onto `main`; the workflow checks that `site/install` equals `install.sh` and deploys.
+GitHub Pages for a private repository needs a paid plan, and the installer itself can only fetch a private repository
+over SSH, so a public download page in practice means a public repository (or hosting `site/` elsewhere).
 
 ## Running with real Claude Code
 1. Install and verify the CLI: `claude --version`. Authentication: use an API key (`ANTHROPIC_API_KEY`); it is injected only

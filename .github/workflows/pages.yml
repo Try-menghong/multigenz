@@ -1,0 +1,39 @@
+# Publishes site/ (the download page) and install.sh (served as /install) to GitHub Pages.
+# Runs only on pushes to main that touch them, or by hand. Enable it once in the repository settings:
+# Settings -> Pages -> Build and deployment -> Source: GitHub Actions. (Pages on a private repository needs a paid plan;
+# with a public repository the installer can also fetch MultiGenz itself over https.)
+name: pages
+
+on:
+  push:
+    branches: [main]
+    paths: ["site/**", "install.sh", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the installer
+        run: |
+          bash -n install.sh
+          cmp install.sh site/install
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v4

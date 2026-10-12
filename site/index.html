@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>MultiGenz</title>
+<meta name="description" content="Run Claude Code, opencode, Cline and Codex as a team on your own machine. Every change is planned, sandboxed, tested independently and committed to a branch MultiGenz owns.">
+<meta name="multigenz-install-url" content="">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Martian+Mono:wght@400;600;750&family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: a run log. Left column states what it is and how to install; right column is a real terminal run.
+   Below, the pipeline a task actually goes through, then the agent matrix with honest test status. */
+:root {
+  --paper: #f3f5f9;        /* cool off-white, biased toward the ink */
+  --panel: #ffffff;
+  --ink: #141b2d;          /* deep blue-black text */
+  --muted: #55607a;
+  --rule: #d5dae6;
+  --accent: #2648d8;       /* cobalt: branch / integration */
+  --accent-ink: #ffffff;
+  --term: #10162a;         /* terminal panel stays dark in both themes */
+  --term-fg: #d9def0;
+  --term-dim: #7f8bb0;
+  --ok: #1f8a57;
+  --warn: #b26a00;
+  --ok-term: #5fd39a;
+  --warn-term: #f2b45a;
+  --branch-term: #9db0ff;
+  --term-cmd: #ffffff;
+  --font-display: "Martian Mono", "JetBrains Mono", ui-monospace, monospace;
+  --font-body: "Atkinson Hyperlegible", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-code: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --step--1: 0.84rem;
+  --step-0: 1rem;
+  --step-1: 1.2rem;
+  --step-2: 1.6rem;
+  --step-3: clamp(1.9rem, 4.2vw, 2.9rem);
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #0d1222; --panel: #141b31; --ink: #e6e9f4; --muted: #9aa4c2; --rule: #26304d;
+    --accent: #8ea4ff; --accent-ink: #0d1222; --term: #070b17; --term-fg: #d9def0; --term-dim: #7480a6;
+    --ok: #5fd39a; --warn: #f2b45a; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #0d1222; --panel: #141b31; --ink: #e6e9f4; --muted: #9aa4c2; --rule: #26304d;
+  --accent: #8ea4ff; --accent-ink: #0d1222; --term: #070b17; --term-fg: #d9def0; --term-dim: #7480a6;
+  --ok: #5fd39a; --warn: #f2b45a; color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--paper); color: var(--ink);
+  font-family: var(--font-body); font-size: var(--step-0); line-height: 1.6;
+}
+.wrap { max-width: 72rem; margin: 0 auto; padding-inline: 1.25rem; }
+a { color: var(--accent); text-underline-offset: 0.18em; }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+code, pre, kbd { font-family: var(--font-code); font-size: 0.92em; }
+
+/* top bar */
+.bar { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding-block: 1.1rem; border-bottom: 1px solid var(--rule); }
+.mark { font-family: var(--font-display); font-weight: 750; letter-spacing: -0.02em; font-size: var(--step-1); color: var(--ink); text-decoration: none; }
+.mark span { color: var(--accent); }
+.nav { display: flex; gap: 1.25rem; flex-wrap: wrap; font-size: var(--step--1); }
+.nav a { color: var(--muted); text-decoration: none; }
+.nav a:hover { color: var(--ink); }
+
+/* hero */
+.hero { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 3rem; padding-block: 3.5rem 3rem; align-items: start; }
+.hero > * { min-width: 0; }
+h1 { font-family: var(--font-display); font-weight: 750; font-size: var(--step-3); line-height: 1.12; letter-spacing: -0.035em; margin: 0 0 1.1rem; text-wrap: balance; }
+.lede { font-size: var(--step-1); color: var(--muted); max-width: 34rem; margin: 0 0 2rem; }
+.lede strong { color: var(--ink); font-weight: 700; }
+
+.install { background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; overflow: hidden; }
+.tabs { display: flex; border-bottom: 1px solid var(--rule); font-size: var(--step--1); overflow-x: auto; }
+.tabs button {
+  appearance: none; border: 0; background: none; color: var(--muted); font: inherit; font-family: var(--font-code);
+  padding: 0.6rem 0.95rem; cursor: pointer; border-bottom: 2px solid transparent; white-space: nowrap;
+}
+.tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+.cmd { display: flex; align-items: center; gap: 0.75rem; padding: 0.9rem 0.9rem 0.9rem 1rem; }
+.cmd pre { margin: 0; flex: 1; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.95rem; color: var(--ink); }
+.cmd pre::before { content: "$ "; color: var(--muted); }
+.copy {
+  appearance: none; flex: none; border: 1px solid var(--rule); background: var(--paper); color: var(--ink);
+  font: 600 var(--step--1) var(--font-code); padding: 0.4rem 0.7rem; border-radius: 6px; cursor: pointer; min-width: 4.6rem;
+}
+.copy:hover { border-color: var(--accent); }
+.copy[data-done="1"] { color: var(--ok); border-color: var(--ok); }
+.note { font-size: var(--step--1); color: var(--muted); padding: 0 1rem 0.95rem; margin: 0; }
+.note code { color: var(--ink); }
+
+/* terminal */
+.term { background: var(--term); color: var(--term-fg); border-radius: 10px; font-family: var(--font-code); font-size: 0.84rem; line-height: 1.65; overflow: hidden; box-shadow: 0 18px 50px -24px rgba(16, 22, 42, 0.55); }
+.term-head { display: flex; align-items: center; gap: 0.45rem; padding: 0.65rem 0.9rem; border-bottom: 1px solid rgba(157, 176, 255, 0.14); color: var(--term-dim); font-size: 0.78rem; }
+.term-head i { width: 0.6rem; height: 0.6rem; border-radius: 50%; background: rgba(157, 176, 255, 0.25); display: inline-block; }
+.term-head span { margin-left: 0.4rem; }
+.term pre { margin: 0; padding: 1rem 1.1rem 1.2rem; overflow-x: auto; white-space: pre; color: var(--term-fg); font-size: inherit; }
+.t-dim { color: var(--term-dim); }
+.t-ok { color: var(--ok-term); }
+.t-warn { color: var(--warn-term); }
+.t-br { color: var(--branch-term); }
+.t-cmd { color: var(--term-cmd); }
+.caption { font-size: var(--step--1); color: var(--muted); margin: 0.75rem 0 0; }
+
+/* sections */
+section { padding-block: 3rem; border-top: 1px solid var(--rule); }
+h2 { font-family: var(--font-display); font-weight: 600; font-size: var(--step-2); letter-spacing: -0.02em; margin: 0 0 0.5rem; text-wrap: balance; }
+.sub { color: var(--muted); max-width: 42rem; margin: 0 0 2rem; }
+
+.pipeline { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0; border: 1px solid var(--rule); border-radius: 10px; overflow: hidden; background: var(--panel); }
+.pipeline li { padding: 1.1rem 1rem 1.2rem; border-right: 1px solid var(--rule); min-width: 0; }
+.pipeline li:last-child { border-right: 0; }
+.state { font-family: var(--font-code); font-size: 0.74rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--accent); display: block; margin-bottom: 0.45rem; }
+.pipeline h3 { font-size: var(--step-0); margin: 0 0 0.35rem; }
+.pipeline p { margin: 0; font-size: var(--step--1); color: var(--muted); }
+
+.matrix-wrap { overflow-x: auto; border: 1px solid var(--rule); border-radius: 10px; background: var(--panel); }
+table { border-collapse: collapse; width: 100%; min-width: 40rem; font-size: 0.94rem; }
+th, td { text-align: left; padding: 0.8rem 1rem; border-bottom: 1px solid var(--rule); vertical-align: top; }
+tr:last-child td { border-bottom: 0; }
+th { font-family: var(--font-code); font-size: 0.74rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+td code { white-space: nowrap; }
+.pill { display: inline-block; font-family: var(--font-code); font-size: 0.74rem; padding: 0.15rem 0.5rem; border-radius: 999px; border: 1px solid currentColor; white-space: nowrap; }
+.pill.ok { color: var(--ok); }
+.pill.warn { color: var(--warn); }
+.pill.muted { color: var(--muted); }
+
+.cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2.5rem; }
+.cols > * { min-width: 0; }
+.guarantees { list-style: none; margin: 0; padding: 0; display: grid; gap: 1rem; }
+.guarantees li { padding-left: 1.4rem; position: relative; }
+.guarantees li::before { content: ""; position: absolute; left: 0; top: 0.62em; width: 0.55rem; height: 0.55rem; border: 2px solid var(--accent); border-radius: 2px; }
+.guarantees strong { display: block; }
+.guarantees span { color: var(--muted); font-size: 0.95rem; }
+
+.steps { background: var(--term); color: var(--term-fg); border-radius: 10px; padding: 1rem 1.1rem; overflow-x: auto; font-family: var(--font-code); font-size: 0.84rem; line-height: 1.75; margin: 0; white-space: pre; }
+.req { margin: 1.25rem 0 0; padding: 0; list-style: none; font-size: 0.95rem; color: var(--muted); display: grid; gap: 0.35rem; }
+.req code { color: var(--ink); }
+
+footer { border-top: 1px solid var(--rule); padding-block: 2rem 3rem; color: var(--muted); font-size: var(--step--1); display: flex; flex-wrap: wrap; gap: 1rem 2rem; justify-content: space-between; }
+
+@media (max-width: 900px) {
+  .hero { grid-template-columns: minmax(0, 1fr); gap: 2.25rem; padding-block: 2.25rem; }
+  .pipeline { grid-template-columns: minmax(0, 1fr); }
+  .pipeline li { border-right: 0; border-bottom: 1px solid var(--rule); }
+  .pipeline li:last-child { border-bottom: 0; }
+  .cols { grid-template-columns: minmax(0, 1fr); gap: 2rem; }
+}
+@media (max-width: 520px) {
+  .nav { display: none; }
+  .cmd { flex-direction: column; align-items: stretch; }
+  .copy { align-self: flex-end; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .copy { transition: border-color 0.15s, color 0.15s; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="bar">
+    <a class="mark" href="#top">multi<span>genz</span></a>
+    <nav class="nav" aria-label="Sections">
+      <a href="#how">How a run works</a>
+      <a href="#agents">Agents</a>
+      <a href="#safety">Guarantees</a>
+      <a href="#start">Get started</a>
+      <a href="https://github.com/Try-menghong/multigenz">GitHub</a>
+    </nav>
+  </header>
+
+  <main id="top">
+    <div class="hero">
+      <div>
+        <h1>Your coding agents, run as a team that can't merge broken work.</h1>
+        <p class="lede">MultiGenz splits a goal into tasks, hands each one to <strong>Claude Code, opencode, Cline or Codex</strong> in its own sandbox and Git worktree, runs <strong>your</strong> tests on the result, and commits only what passes to a branch it owns. It never pushes.</p>
+
+        <div class="install" id="install">
+          <div class="tabs" role="tablist" aria-label="Install method">
+            <button role="tab" id="tab-curl" aria-selected="true" aria-controls="cmd-panel" data-cmd="curl">curl</button>
+            <button role="tab" id="tab-checkout" aria-selected="false" aria-controls="cmd-panel" data-cmd="checkout">from a checkout</button>
+            <button role="tab" id="tab-uninstall" aria-selected="false" aria-controls="cmd-panel" data-cmd="uninstall">uninstall</button>
+          </div>
+          <div class="cmd" id="cmd-panel" role="tabpanel">
+            <pre id="cmd-text">curl -fsSL https://try-menghong.github.io/multigenz/install | bash</pre>
+            <button class="copy" id="copy-btn" type="button">Copy</button>
+          </div>
+          <p class="note" id="cmd-note">Linux only. Installs into <code>~/.multigenz</code> and links <code>~/.local/bin/multigenz</code>. No sudo.</p>
+        </div>
+      </div>
+
+      <div>
+        <div class="term" role="img" aria-label="Terminal output of a MultiGenz run that succeeded after one repair attempt">
+          <div class="term-head"><i></i><i></i><i></i><span>~/demo</span></div>
+<pre><span class="t-cmd">$ multigenz run "Add a clamp(value, low, high) function with tests" --repo .</span>
+run ef8faadd4d97: <span class="t-ok">SUCCEEDED</span>
+  objective: Add a clamp(value, low, high) function with tests
+  integration branch: <span class="t-br">multigenz/run-ef8faadd4d97/integration</span>
+  final commit: 6a537876c4d7
+  - clamp   <span class="t-ok">succeeded</span>  attempts=<span class="t-warn">2</span> provider=claude
+            tests/validation: <span class="t-ok">pass</span>
+  cost: <span class="t-dim">Spend for CLI/subscription agents cannot be
+        measured and is reported as unknown.</span>
+  automatic push is disabled; nothing was pushed or deployed
+
+<span class="t-cmd">$ multigenz runs events ef8faadd4d97 | grep validation.result</span>
+<span class="t-dim">attempt 1</span>  <span class="t-warn">rejected</span>  calculator/__pycache__/*.pyc outside allowed paths
+<span class="t-dim">attempt 2</span>  <span class="t-ok">passed</span>    calculator/calculator.py, tests/test_calculator.py</pre>
+        </div>
+        <p class="caption">A real run with Claude Code. The first attempt left bytecode files behind, so validation rejected it; the second attempt fixed that and was integrated.</p>
+      </div>
+    </div>
+
+    <section id="how" aria-labelledby="how-h">
+      <h2 id="how-h">How a run works</h2>
+      <p class="sub">Every task moves through the same states. The model never decides that a task succeeded; MultiGenz does, from evidence it gathered itself.</p>
+      <ol class="pipeline">
+        <li><span class="state">planning</span><h3>Plan</h3><p>A planner agent proposes a task graph. Cycles, unknown dependencies and overlapping file ownership are rejected before anything runs.</p></li>
+        <li><span class="state">running</span><h3>Isolate</h3><p>Each task gets its own Git worktree and a user-namespace sandbox: read-only system, one writable workspace, no host secrets.</p></li>
+        <li><span class="state">validating</span><h3>Verify</h3><p>Changed paths, file modes, sizes and credential patterns are checked, then your own test profile runs on an exported copy.</p></li>
+        <li><span class="state">ready</span><h3>Repair</h3><p>A failed attempt goes back to the agent with the exact failures, within the attempt limit you set.</p></li>
+        <li><span class="state">succeeded</span><h3>Integrate</h3><p>Validated work lands as one commit on <code>multigenz/run-&lt;id&gt;/integration</code>, tested again after the merge.</p></li>
+      </ol>
+    </section>
+
+    <section id="agents" aria-labelledby="agents-h">
+      <h2 id="agents-h">Agents</h2>
+      <p class="sub">MultiGenz drives the coding-agent CLIs you already use, with their own logins. An agent is enabled only after its flags are found in that binary's own <code>--help</code>. The status column says how far each one has actually been tested.</p>
+      <div class="matrix-wrap">
+        <table>
+          <thead><tr><th>Agent</th><th>Command it runs</th><th>Tested</th><th>Add it</th></tr></thead>
+          <tbody>
+            <tr><td>Claude Code</td><td><code>claude --print</code></td><td><span class="pill ok">real model runs</span></td><td><code>multigenz agents add claude</code></td></tr>
+            <tr><td>opencode</td><td><code>opencode run --auto</code></td><td><span class="pill ok">end to end, local test model</span></td><td><code>multigenz agents add opencode</code></td></tr>
+            <tr><td>Cline</td><td><code>cline --yolo</code></td><td><span class="pill ok">end to end, local test model</span></td><td><code>multigenz agents add cline</code></td></tr>
+            <tr><td>OpenAI Codex</td><td><code>codex exec</code></td><td><span class="pill warn">opt-in: its own sandbox off</span></td><td><code>multigenz agents add codex --trust-outer-sandbox</code></td></tr>
+            <tr><td>Google Antigravity</td><td><code>agy --print</code></td><td><span class="pill muted">experimental</span></td><td><code>multigenz agents add agy</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="caption">“Local test model” means the real CLI ran inside the MultiGenz sandbox against a scripted model server, through planning, coding, validation and integration. Codex's own sandbox cannot start inside MultiGenz's, so Codex only runs if you accept relying on the MultiGenz sandbox alone.</p>
+    </section>
+
+    <section id="safety" aria-labelledby="safety-h">
+      <div class="cols">
+        <div>
+          <h2 id="safety-h">Guarantees</h2>
+          <p class="sub">These hold no matter what an agent writes in its output.</p>
+          <ul class="guarantees">
+            <li><strong>Your checkout is never touched.</strong><span>Work happens in separate worktrees on <code>multigenz/run-&lt;id&gt;/…</code> branches. Your branch and uncommitted files stay as they were.</span></li>
+            <li><strong>Nothing is pushed or deployed.</strong><span>There is no push command in MultiGenz. You merge the integration branch yourself when you are satisfied.</span></li>
+            <li><strong>No sandbox, no run.</strong><span>If isolation is unavailable, the run refuses to start. It never falls back to running agents unsandboxed.</span></li>
+            <li><strong>Only your test commands run.</strong><span>Planner-suggested commands are ignored; fixed test profiles from your policy decide success.</span></li>
+            <li><strong>Logins stay scoped.</strong><span>Each agent sees only the credentials you name for it, mounted read-only. Logs and reports are redacted.</span></li>
+          </ul>
+        </div>
+        <div id="start">
+          <h2>Get started</h2>
+          <p class="sub">Install, let MultiGenz find your agent CLIs, then point it at a repository with tests.</p>
+<pre class="steps"><span class="t-dim"># 1. install</span>
+curl -fsSL <span id="steps-url">https://try-menghong.github.io/multigenz/install</span> | bash
+
+<span class="t-dim"># 2. write a policy with the CLIs found on PATH</span>
+multigenz init
+multigenz doctor
+
+<span class="t-dim"># 3. run a goal against a repo</span>
+multigenz run "Add input validation with tests" --repo ./app
+
+<span class="t-dim"># 4. review, then merge yourself</span>
+git -C ./app log multigenz/run-&lt;id&gt;/integration</pre>
+          <ul class="req">
+            <li>Linux with unprivileged user namespaces (<code>unshare</code>)</li>
+            <li><code>git</code> 2.38 or newer</li>
+            <li>Python 3.12 or newer, or <code>uv</code> to provide it</li>
+            <li>At least one agent CLI, logged in</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <span>MultiGenz is local-first: it runs on your machine with your agents' own logins. Agent usage counts against those plans.</span>
+    <span><a href="https://github.com/Try-menghong/multigenz">Source</a> · <a href="https://github.com/Try-menghong/multigenz/blob/main/docs/SECURITY.md">Security model</a></span>
+  </footer>
+</div>
+
+<script>
+(function () {
+  var meta = document.querySelector('meta[name="multigenz-install-url"]');
+  var url = meta && meta.content;
+  if (!url && /^https?:$/.test(location.protocol)) {
+    url = new URL("install", location.href).href;
+  }
+  url = url || "https://try-menghong.github.io/multigenz/install";
+  var commands = {
+    curl: { text: "curl -fsSL " + url + " | bash",
+            note: "Linux only. Installs into ~/.multigenz and links ~/.local/bin/multigenz. No sudo." },
+    checkout: { text: "MULTIGENZ_SOURCE=$PWD bash install.sh",
+                note: "Run inside a clone of the repository to install that exact checkout." },
+    uninstall: { text: "curl -fsSL " + url + " | bash -s -- --uninstall",
+                 note: "Removes the program. Your policy and run history are left in place." }
+  };
+  var text = document.getElementById("cmd-text");
+  var note = document.getElementById("cmd-note");
+  var btn = document.getElementById("copy-btn");
+  var steps = document.getElementById("steps-url");
+  if (steps) steps.textContent = url;
+  function show(key) {
+    text.textContent = commands[key].text;
+    note.textContent = commands[key].note;
+    document.querySelectorAll(".tabs button").forEach(function (b) {
+      b.setAttribute("aria-selected", b.dataset.cmd === key ? "true" : "false");
+    });
+    btn.textContent = "Copy";
+    btn.dataset.done = "";
+  }
+  document.querySelectorAll(".tabs button").forEach(function (b) {
+    b.addEventListener("click", function () { show(b.dataset.cmd); });
+  });
+  function selectText() {
+    var range = document.createRange();
+    range.selectNodeContents(text);
+    var sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+  btn.addEventListener("click", function () {
+    var value = text.textContent;
+    function done(label) { btn.textContent = label; btn.dataset.done = "1"; }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(value).then(function () { done("Copied"); },
+        function () { selectText(); done("Selected"); });
+    } else {
+      selectText(); done("Selected");
+    }
+  });
+  show("curl");
+})();
+</script>
+</body>
+</html>

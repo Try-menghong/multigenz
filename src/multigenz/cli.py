@@ -56,7 +56,9 @@ def doctor(policy: PolicyOpt = None, json_out: Annotated[bool, typer.Option("--j
         pol = load_policy(policy)
     except MultiGenzError as exc:
         err = str(exc)
-    checks = asyncio.run(run_doctor(pol, policy_error=err))
+    from multigenz.config import default_policy_path
+
+    checks = asyncio.run(run_doctor(pol, policy_error=err, policy_file=policy or default_policy_path()))
     if json_out:
         typer.echo(json.dumps([c.__dict__ | {"status": c.status} for c in checks], indent=2))
     else:
