@@ -132,3 +132,18 @@ async def test_add_agent_from_a_preset(tmp_path, scenario):
             if "opencode" in [str(k.value) for k in screen.query_one("#matrix", DataTable).rows]:
                 break
     assert "opencode" in load_policy(f).agents
+
+
+async def test_planning_mode_is_cycled_and_saved(tmp_path, scenario):
+    f = write_policy(tmp_path, scenario)
+    app = MultiGenzApp(tmp_path / "home", policy=load_policy(f), policy_path=f, start="team")
+    async with app.run_test(size=(160, 50)) as pilot:
+        screen = await open_team(pilot)
+        assert screen.planning == "always"
+        await pilot.press("p")
+        assert screen.planning == "auto" and screen.dirty
+        summary = str(screen.query_one("#team-summary", Static).content)
+        assert "Planning: auto" in summary and "only used with planning: always" in summary
+        await pilot.press("s")
+        await pilot.pause()
+    assert load_policy(f).orchestrator.planning == "auto"

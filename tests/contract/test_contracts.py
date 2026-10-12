@@ -11,8 +11,9 @@ from multigenz.contracts.task import PlanDocument, TaskSpec, TaskStatus
 
 
 def test_task_status_values_are_exactly_the_documented_ones():
+    # "split" is the one documented extension (docs/ARCHITECTURE.md): a task handed to validated subtasks
     assert {s.value for s in TaskStatus} == {"pending", "ready", "running", "validating", "succeeded", "failed",
-                                             "blocked", "cancelled"}
+                                             "blocked", "cancelled", "split"}
 
 
 def test_task_spec_contains_the_documented_base_fields_with_documented_defaults():

@@ -52,6 +52,12 @@ def _claude_pytest_invocations() -> list[dict]:
          "requires_help_tokens": ["--print", "--permission-mode", '"acceptEdits"', "--allowedTools",
                                   "--no-session-persistence"],
          "modes": ["code", "conflict"]},
+        {"name": "print-plan-readonly-tools",
+         "argv": ["{command}", "--print", "--permission-mode", "plan", "--tools", "Read,Glob,Grep",
+                  "--no-session-persistence"],
+         "stdin": "prompt",
+         "requires_help_tokens": ["--print", "--permission-mode", '"plan"', "--tools", "--no-session-persistence"],
+         "modes": ["plan", "review", "analysis"]},
         {"name": "print-plan",
          "argv": ["{command}", "--print", "--permission-mode", "plan", "--no-session-persistence"],
          "stdin": "prompt",
@@ -80,7 +86,10 @@ PRESETS: dict[str, Preset] = {p.key: p for p in [
            "opencode (`opencode run --auto`), any provider opencode is logged in to",
            env=["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "OPENROUTER_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY",
                 "DEEPSEEK_API_KEY"],
-           files=["~/.local/share/opencode/auth.json", "~/.config/opencode/opencode.json"],
+           files=["~/.local/share/opencode/auth.json", "~/.config/opencode/opencode.json",
+                  # your opencode plugins come along (local *.ts/*.js plugins; npm plugins listed in opencode.json are
+                  # fetched by opencode itself, which needs the network)
+                  "~/.config/opencode/plugin", "~/.config/opencode/plugins"],
            install_hint="npm i -g opencode-ai; then `opencode auth login`"),
     Preset("cline", "cline", "cline", ["architecture", "coding", "testing", "review"], "run-tested",
            "Cline CLI (`cline --yolo`), any provider Cline is configured for",
@@ -91,6 +100,12 @@ PRESETS: dict[str, Preset] = {p.key: p for p in [
            env=["OPENAI_API_KEY", "CODEX_API_KEY"],
            files=["~/.codex/auth.json", "~/.codex/config.toml"],
            install_hint="npm i -g @openai/codex; then `codex login`"),
+    Preset("hermes", "hermes", "hermes", ["architecture", "coding", "testing", "review"], "run-tested",
+           "Hermes Agent (`hermes -z`), any provider Hermes is set up for; your Hermes skills and plugins come along",
+           env=["OPENROUTER_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "NOUS_API_KEY", "GEMINI_API_KEY",
+                "DEEPSEEK_API_KEY"],
+           files=["~/.hermes/config.yaml", "~/.hermes/.env", "~/.hermes/skills", "~/.hermes/plugins"],
+           install_hint="pip install hermes-agent (or uv tool install hermes-agent); then `hermes setup`"),
     Preset("agy", "antigravity", "agy", ["research", "architecture"], "experimental",
            "Google Antigravity (`agy --print`); candidate flags from `agy --help` 1.3.3, never run in development",
            invocations=None),
@@ -196,6 +211,9 @@ orchestrator:
   max_task_attempts: 3
   task_timeout_seconds: 1200
   run_budget_usd: 5.00            # only enforced where cost is measurable (subscription CLIs report "unknown")
+  # auto: one worker takes the goal and asks for subagents only when it is too big (no separate planning run);
+  # always: a planner splits every goal first; never: one agent does it all. Change with `multigenz roles planning`.
+  planning: auto
 agents: {{}}
 execution:
   isolation: userns               # rootless Linux namespaces; never falls back to unsandboxed execution

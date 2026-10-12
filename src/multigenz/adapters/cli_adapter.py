@@ -56,6 +56,9 @@ async def _capture(argv: list[str], timeout: float = 15.0) -> tuple[int | None, 
     return proc.returncode, out.decode("utf-8", "replace")
 
 
+MAX_ARG_PROMPT = 120_000  # Linux refuses a single argv string over 128 KiB (MAX_ARG_STRLEN)
+
+
 class CliAdapter(AgentAdapter):
     provider_class = "cli"
     BUILTIN_INVOCATIONS: list[InvocationCfg] = []
@@ -140,10 +143,11 @@ class CliAdapter(AgentAdapter):
         raise AdapterUnavailable(f"{self.name}: no verified invocation for mode {mode!r}")
 
     # -- execution -----------------------------------------------------------------
-    def _render_argv(self, inv: InvocationCfg, task: TaskSpec, ctx: ExecutionContext) -> list[str]:
+    def _render_argv(self, inv: InvocationCfg, task: TaskSpec, ctx: ExecutionContext, prompt: str = "") -> list[str]:
         assert self.runner is not None and self._binary is not None
         subs = {
             "command": self._binary,
+            "prompt": prompt,  # for CLIs that only take the prompt as an argument (e.g. hermes -z)
             "prompt_file": f"{self.runner.inbox_path(ctx)}/prompt.txt",
             "task_file": f"{self.runner.inbox_path(ctx)}/task.json",
             "task_id": task.task_id,
@@ -195,7 +199,14 @@ class CliAdapter(AgentAdapter):
         context.inbox.mkdir(parents=True, exist_ok=True)
         (context.inbox / "prompt.txt").write_text(prompt, encoding="utf-8")
         (context.inbox / "task.json").write_text(task_json(task, context), encoding="utf-8")
-        argv = self._render_argv(inv, task, context)
+        if any("{prompt}" in a for a in inv.argv) and len(prompt.encode()) > MAX_ARG_PROMPT:
+            self._results[attempt] = AgentResult(task_id=task.task_id, attempt_id=attempt, exit_code=None,
+                                                 commit_sha=None, artifacts=[], success=False,
+                                                 error_code="spawn_failed")
+            yield ev("error", f"prompt is {len(prompt.encode())} bytes; {inv.name} passes it as one argument "
+                              f"(limit {MAX_ARG_PROMPT})")
+            return
+        argv = self._render_argv(inv, task, context, prompt)
         cmd = AdapterCommand(argv=argv, agent=self.name, stdin_data=prompt.encode() if inv.stdin == "prompt" else None,
                              unattended=inv.unattended, label=f"{self.name}:{inv.name}")
         yield ev("started", f"{self.name} invocation={inv.name} mode={context.mode}")

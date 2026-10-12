@@ -26,6 +26,7 @@ class TaskStatus(StrEnum):
     FAILED = "failed"
     BLOCKED = "blocked"
     CANCELLED = "cancelled"
+    SPLIT = "split"  # extension: the agent delegated the task to validated subtasks (planning: auto)
 
 class TaskSpec(BaseModel):
     schema_version: int = 1

@@ -62,6 +62,10 @@ async def start_run(policy: Policy, *, objective: str, repo: Path, plan: PlanDoc
                     handle_signals: bool = False, on_message: Callable[[str], None] | None = None,
                     **orch_kw) -> tuple[str, RunOutcome | None]:
     svc = services or await build_services(policy)
+    if plan is None and policy.orchestrator.planning != "always":
+        from multigenz.core.split import goal_plan
+
+        plan = goal_plan(objective, policy)  # no separate planning run: one agent takes the whole goal
     store = open_store(home, svc.redactor)
     try:
         run_id = await create_run(store, svc, objective=objective, repo=repo, plan=plan, home=home, mode=mode)

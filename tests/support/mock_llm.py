@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import threading
 import time
 import uuid
@@ -32,6 +33,13 @@ FINAL_TEXT = "Done: created " + FILE_NAME
 PLANNER_MARKER = "Produce a task DAG for the goal below"
 REVIEW_MARKER = 'Reply with ONE JSON object: {"approve"'
 REVIEW = {"approve": True, "issues": []}
+SPLIT_MARKER = "Doing it yourself, or asking for subagents"
+SPLIT = False  # tests set this: answer the whole-goal task (planning: auto) with a request for two subagents
+SPLIT_REQUEST = {"subtasks": [
+    {"task_id": "part-a", "title": "part a", "objective": "Create part-a.txt", "allowed_paths": ["part-a.txt"],
+     "required_capabilities": ["coding"]},
+    {"task_id": "part-b", "title": "part b", "objective": "Create part-b.txt", "allowed_paths": ["part-b.txt"],
+     "required_capabilities": ["coding"]}]}
 PLAN = {"schema_version": 1, "summary": "create the requested file", "tasks": [{
     "schema_version": 1, "task_id": "create-file", "title": "Create " + FILE_NAME,
     "objective": "Create the file " + FILE_NAME, "dependencies": [], "allowed_paths": [FILE_NAME],
@@ -67,13 +75,24 @@ def _fill(schema: dict, values: dict) -> dict:
     return args
 
 
-def choose_call(tools: list[dict]) -> tuple[str, dict] | None:
+def file_for(body: dict) -> str:
+    """The file a coding request creates: per subtask when splitting (``# Task part-a: ...`` -> part-a.txt)."""
+    if SPLIT:
+        for t in _texts(body.get("messages") or body.get("input") or []):
+            m = re.search(r"# Task ([a-z0-9][a-z0-9_-]*):", t)
+            if m and m.group(1) != "goal":
+                return f"{m.group(1)}.txt"
+    return FILE_NAME
+
+
+def choose_call(tools: list[dict], file_name: str | None = None) -> tuple[str, dict] | None:
     """Pick a tool the CLI offered and build its arguments. ``tools`` are normalised {name, parameters}."""
+    name_ = file_name or FILE_NAME
     by_name = {t["name"].lower(): t for t in tools if t.get("name")}
     for name in SHELL_TOOLS:
         if name in by_name:
             t = by_name[name]
-            cmd = _shell_cmd()
+            cmd = f"printf '%s\\n' '{FILE_TEXT}' > {name_}"
             return t["name"], _fill(t.get("parameters") or {}, {
                 "command": cmd, "cmd": cmd, "commands": [cmd], "description": "create the requested file",
                 "requires_approval": False,
@@ -82,8 +101,8 @@ def choose_call(tools: list[dict]) -> tuple[str, dict] | None:
         if name in by_name:
             t = by_name[name]
             return t["name"], _fill(t.get("parameters") or {}, {
-                "filePath": FILE_NAME, "file_path": FILE_NAME, "path": FILE_NAME, "content": FILE_TEXT + "\n",
-                "absolute_path": FILE_NAME,
+                "filePath": name_, "file_path": name_, "path": name_, "content": FILE_TEXT + "\n",
+                "absolute_path": name_,
             })
     return None
 
@@ -98,10 +117,11 @@ def completion_call(tools: list[dict]) -> tuple[str, dict] | None:
     return None
 
 
-def next_call(tools: list[dict], results: int, called: set[str]) -> tuple[str, dict] | None:
+def next_call(tools: list[dict], results: int, called: set[str], file_name: str | None = None
+              ) -> tuple[str, dict] | None:
     """Turn logic: no tool result yet -> do the work; then call a completion tool if the CLI requires one."""
     if results == 0:
-        return choose_call(tools)
+        return choose_call(tools, file_name)
     done = completion_call(tools)
     if done and done[0] not in called:
         return done
@@ -133,6 +153,9 @@ def is_review(body: dict) -> bool:
 
 def text_answer(body: dict) -> str | None:
     """A request that wants text (a plan or a review verdict) gets it directly, without tool calls."""
+    texts = _texts(body.get("messages") or body.get("input") or [])
+    if SPLIT and any(SPLIT_MARKER in t for t in texts):
+        return json.dumps(SPLIT_REQUEST)
     if is_planning(body):
         return json.dumps(PLAN)
     if is_review(body):
@@ -212,7 +235,8 @@ class Handler(BaseHTTPRequestHandler):
         results = sum(m.get("role") == "tool" for m in msgs)
         called = {tc.get("function", {}).get("name") for m in msgs for tc in (m.get("tool_calls") or [])}
         answer = text_answer(body)
-        call = None if answer is not None else next_call(_norm_tools(body.get("tools")), results, called)
+        call = None if answer is not None else next_call(_norm_tools(body.get("tools")), results, called,
+                                                         file_for(body))
         final = answer if answer is not None else FINAL_TEXT
         model = body.get("model", "mock-model")
         cid = "chatcmpl-" + uuid.uuid4().hex[:12]
@@ -246,7 +270,8 @@ class Handler(BaseHTTPRequestHandler):
         results = sum(i.get("type") in ("function_call_output", "custom_tool_call_output") for i in items)
         called = {i.get("name") for i in items if i.get("type") == "function_call"}
         answer = text_answer(body)
-        call = None if answer is not None else next_call(_norm_tools(body.get("tools")), results, called)
+        call = None if answer is not None else next_call(_norm_tools(body.get("tools")), results, called,
+                                                         file_for(body))
         final = answer if answer is not None else FINAL_TEXT
         rid = "resp_" + uuid.uuid4().hex[:12]
         model = body.get("model", "mock-model")

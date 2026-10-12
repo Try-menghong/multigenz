@@ -21,6 +21,8 @@ def build_report(store: Store, run_id: str) -> dict:
     measured = [a["cost_usd"] for a in attempts if a["cost_usd"] is not None]
     unknown = [a for a in attempts if a["cost_usd"] is None]
     providers = sorted({a["provider"] for a in unknown})
+    split_of = {e["task_id"]: e["payload"].get("subtasks", []) for e in store.events(run_id, kinds=("task.split",))}
+    reviews = sum(1 for e in validations for c in e["payload"].get("checks", []) if c["name"].startswith("review:agent"))
     report = {
         "run_id": run_id,
         "objective": run["objective"],
@@ -39,7 +41,11 @@ def build_report(store: Store, run_id: str) -> dict:
             "branch": t["branch"], "head_commit": t["head_commit"], "integrated_commit": t["integrated_commit"],
             "failure_reason": t["failure_reason"],
             "last_validation": last_val.get(t["task_id"]),
+            "subtasks": split_of.get(t["task_id"], []),
         } for t in tasks],
+        # how many agent runs this goal cost (each one uses the agent's plan or API quota)
+        "agent_runs": {"planning": len(store.events(run_id, kinds=("plan.requested",))),
+                       "coding": len(attempts), "review": reviews},
         "attempts": [{
             "attempt_id": a["attempt_id"], "task_id": a["task_id"], "number": a["number"], "kind": a["kind"],
             "provider": a["provider"], "status": a["status"], "exit_code": a["exit_code"],

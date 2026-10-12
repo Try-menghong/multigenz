@@ -103,3 +103,18 @@ def test_registry_builds_preset_adapters(tmp_path):
     init_policy(pol, agents=["opencode", "cline"])
     ads = build_adapters(load_policy(pol))
     assert type(ads["opencode"]).__name__ == "OpencodeAdapter" and type(ads["cline"]).__name__ == "ClineAdapter"
+
+
+def test_runtime_mounts_cover_a_python_virtualenv_cli(tmp_path):
+    """pip/pipx/uv-installed CLIs (hermes): the venv and its interpreter prefix, never the home directory."""
+    prefix = tmp_path / "pythons" / "cpython-3.12"
+    (prefix / "bin").mkdir(parents=True)
+    fake_bin(prefix / "bin", "python3.12")
+    venv = tmp_path / "venvs" / "tool"
+    (venv / "bin").mkdir(parents=True)
+    (venv / "pyvenv.cfg").write_text(f"home = {prefix / 'bin'}\nversion_info = 3.12.3\n")
+    (venv / "bin" / "python").symlink_to(prefix / "bin" / "python3.12")
+    script = venv / "bin" / "tool"
+    script.write_text(f"#!{venv / 'bin' / 'python'}\nimport sys\n")
+    dirs, _ = runtime_mounts(str(script))
+    assert str(venv) in dirs and str(prefix) in dirs

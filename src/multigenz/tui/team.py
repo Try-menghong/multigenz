@@ -27,6 +27,12 @@ ROLE_EXPLAIN = {
     "conflict": "Conflict resolvers: fix merge conflicts between tasks",
 }
 COLUMNS = ["agent", "on", *ROLE_NAMES, "status"]
+PLANNING_ORDER = ["always", "auto", "never"]
+PLANNING_EXPLAIN = {
+    "always": "the planner splits every goal into tasks first (one extra agent run per goal)",
+    "auto": "one worker takes the goal and asks for subagents only when it is too big (no planning run)",
+    "never": "one worker does the whole goal; no planning, no subagents (cheapest)",
+}
 
 
 def auto_members(pol: Policy, probes: dict, role: str) -> list[str]:
@@ -77,6 +83,7 @@ class TeamScreen(Screen):
         Binding("right_square_bracket", "move(1)", "Later"),
         Binding("c", "auto", "Role: automatic"),
         Binding("e", "enable", "Enable/disable"),
+        Binding("p", "planning", "Planning mode"),
         Binding("a", "add", "Add agent"),
         Binding("s", "save", "Save"),
         Binding("escape", "back", "Back"),
@@ -89,6 +96,7 @@ class TeamScreen(Screen):
         self.probes: dict = {}
         self.roles: dict[str, list[str]] = {r: [] for r in ROLE_NAMES}
         self.enabled: dict[str, bool] = {}
+        self.planning = "always"
         self.dirty = False
 
     def compose(self) -> ComposeResult:
@@ -122,9 +130,10 @@ class TeamScreen(Screen):
             return
         self.roles = {r: list(getattr(self.pol.roles, r)) for r in ROLE_NAMES}
         self.enabled = {n: a.enabled for n, a in self.pol.agents.items()}
+        self.planning = self.pol.orchestrator.planning
         self.dirty = False
         intro.update(f"{self.policy_path}  -  space: add/remove the agent in that role   [ ]: reorder   "
-                     "c: role back to automatic   e: enable/disable   a: add agent   s: save")
+                     "c: role back to automatic   e: enable/disable   p: planning mode   a: add agent   s: save")
         self.redraw()
         self.run_worker(self.probe_all(), exclusive=True, group="probe")
 
@@ -187,7 +196,7 @@ class TeamScreen(Screen):
         self.query_one("#team-summary", Static).update(self.summary(eff))
 
     def summary(self, eff: Policy | None) -> str:
-        lines = []
+        lines = [f"Planning: {self.planning} - {PLANNING_EXPLAIN[self.planning]}"]
         for r in ROLE_NAMES:
             chosen = self.roles[r]
             if chosen:
@@ -200,6 +209,8 @@ class TeamScreen(Screen):
             else:
                 auto = auto_members(eff, self.probes, r) if (eff is not None and self.probes) else []
                 value = "automatic" + (f": {', '.join(auto)}" if auto else "")
+            if r == "planner" and self.planning != "always":
+                value += "   (only used with planning: always, and by `multigenz plan`)"
             lines.append(f"{ROLE_EXPLAIN[r]}\n    {value}")
         return "\n".join(lines) + ("\n\nUNSAVED CHANGES (s to save)" if self.dirty else "")
 
@@ -275,6 +286,12 @@ class TeamScreen(Screen):
         self.enabled[agent] = not self.enabled.get(agent, True)
         self._changed(f"{agent} {'enabled' if self.enabled[agent] else 'disabled'}")
 
+    def action_planning(self) -> None:
+        if self.pol is None:
+            return
+        self.planning = PLANNING_ORDER[(PLANNING_ORDER.index(self.planning) + 1) % len(PLANNING_ORDER)]
+        self._changed(f"planning: {self.planning}")
+
     def action_save(self) -> None:
         from multigenz.policy_edit import save_policy_edits, short_error
 
@@ -282,7 +299,9 @@ class TeamScreen(Screen):
             return
         changed = {n: on_ for n, on_ in self.enabled.items() if self.pol.agents[n].enabled != on_}
         try:
-            pol, backup = save_policy_edits(self.policy_path, roles=self.roles, enabled=changed)
+            pol, backup = save_policy_edits(
+                self.policy_path, roles=self.roles, enabled=changed,
+                planning=self.planning if self.planning != self.pol.orchestrator.planning else None)
         except Exception as exc:  # noqa: BLE001 - report, keep the edits so they can be fixed
             self.set_status(f"NOT SAVED: {short_error(exc)}")
             return

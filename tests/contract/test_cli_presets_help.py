@@ -11,6 +11,7 @@ import pytest
 from multigenz.adapters.cline import ClineAdapter
 from multigenz.adapters.codex import CodexAdapter
 from multigenz.adapters.antigravity import EXPERIMENTAL_INVOCATIONS
+from multigenz.adapters.hermes import HermesAdapter
 from multigenz.adapters.opencode import OpencodeAdapter
 from multigenz.config import InvocationCfg
 from multigenz.presets import PRESETS, preset_invocations
@@ -21,6 +22,7 @@ CASES = [
     ("opencode-1.19.0-run.txt", OpencodeAdapter.BUILTIN_INVOCATIONS),
     ("codex-0.162.1-exec.txt", CodexAdapter.BUILTIN_INVOCATIONS),
     ("agy-1.3.3.txt", EXPERIMENTAL_INVOCATIONS),
+    ("hermes-agent-0.19.0.txt", HermesAdapter.BUILTIN_INVOCATIONS),
 ]
 
 
@@ -31,7 +33,7 @@ def test_invocations_verify_against_recorded_help(fixture, invocations):
     for inv in invocations:
         missing = [t for t in inv.requires_help_tokens if t not in text]
         assert not missing, f"{inv.name}: {missing}"
-        assert inv.stdin == "prompt" and inv.argv[0] == "{command}"
+        assert inv.argv[0] == "{command}" and (inv.stdin == "prompt" or "{prompt}" in inv.argv)
 
 
 def test_every_preset_invocation_is_a_valid_invocation_config():

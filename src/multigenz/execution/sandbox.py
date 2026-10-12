@@ -46,7 +46,9 @@ def runtime_mounts(exe: str, host_path: str | None = None) -> tuple[list[str], l
     * an npm-installed CLI (``.../node_modules/<pkg>/...``) loads sibling packages, e.g. its platform-specific binary,
       so the whole ``node_modules`` root it lives in is exposed read-only;
     * a script (``#!/usr/bin/env node`` or ``#!/abs/interpreter``) needs its interpreter: only the interpreter's own
-      directory is exposed (never a whole prefix such as ``~/.local``, whose ``share/`` may hold other tools' logins).
+      directory is exposed (never a whole prefix such as ``~/.local``, whose ``share/`` may hold other tools' logins);
+    * a script whose interpreter lives in a Python virtualenv (pip/pipx/uv-installed CLIs such as ``hermes``) also needs
+      that virtualenv and the interpreter prefix its ``pyvenv.cfg`` names.
     """
     dirs: list[str] = []
     path_dirs: list[str] = []
@@ -69,6 +71,17 @@ def runtime_mounts(exe: str, host_path: str | None = None) -> tuple[list[str], l
         elif parts:
             interp = parts[0]
         if interp and os.path.isabs(interp):
+            # a Python virtualenv (pip/pipx/uv-installed CLIs): the venv itself and the interpreter prefix it names
+            venv = os.path.dirname(os.path.dirname(interp))
+            cfg = os.path.join(venv, "pyvenv.cfg")
+            if os.path.isfile(cfg) and venv not in ("/", os.path.expanduser("~")):
+                dirs.append(venv)
+                for line in open(cfg, encoding="utf-8", errors="replace").read().splitlines():
+                    key, _, val = line.partition("=")
+                    prefix = os.path.dirname(val.strip().rstrip("/")) if key.strip() == "home" else ""
+                    if prefix and os.path.isabs(prefix) and os.path.isdir(prefix) and not prefix.startswith("/usr") \
+                            and prefix not in ("/", os.path.expanduser("~")) and prefix not in dirs:
+                        dirs.append(prefix)
             for hop in (interp, os.path.realpath(interp)):
                 d = os.path.dirname(hop)
                 if not d.startswith("/usr/") and d not in ("/bin", "/sbin") and d not in dirs:

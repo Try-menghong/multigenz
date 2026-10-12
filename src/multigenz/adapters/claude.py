@@ -12,6 +12,7 @@ from multigenz.config import InvocationCfg
 
 CODE_MODES = ["code", "conflict"]
 READ_MODES = ["plan", "review", "analysis"]
+READONLY_TOOLS = "Read,Glob,Grep"
 
 
 class ClaudeAdapter(CliAdapter):
@@ -22,6 +23,15 @@ class ClaudeAdapter(CliAdapter):
             stdin="prompt",
             requires_help_tokens=["--print", "--permission-mode", '"acceptEdits"', "--no-session-persistence"],
             modes=CODE_MODES,
+        ),
+        # Planning/review only need to read: no shell, no editing, no web, no sub-agents. Fewer tools = fewer steps.
+        InvocationCfg(
+            name="print-plan-readonly-tools",
+            argv=["{command}", "--print", "--permission-mode", "plan", "--tools", READONLY_TOOLS,
+                  "--no-session-persistence"],
+            stdin="prompt",
+            requires_help_tokens=["--print", "--permission-mode", '"plan"', "--tools", "--no-session-persistence"],
+            modes=READ_MODES,
         ),
         InvocationCfg(
             name="print-plan",

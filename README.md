@@ -1,7 +1,7 @@
 # MultiGenz
 
 Local-first autonomous multi-agent software-development orchestrator. It drives the coding-agent CLIs you already use
-(**Claude Code, opencode, Cline, OpenAI Codex**, experimentally Google Antigravity) plus LiteLLM providers for planning
+(**Claude Code, opencode, Cline, OpenAI Codex, Hermes Agent**, experimentally Google Antigravity) plus LiteLLM providers for planning
 and review text, each in its own sandbox and Git worktree, and integrates only independently tested work.
 
 **Status:** implemented through milestones M1–M5 and verified by an automated suite (see [docs/TESTING.md](docs/TESTING.md)).
@@ -47,6 +47,7 @@ GitHub Pages is enabled (Settings → Pages → Source: GitHub Actions) and the 
 | `opencode` | `opencode run --auto` (prompt on stdin) | end to end in the sandbox against a local scripted model | uses opencode's own login files, mounted read-only |
 | `cline` | `cline --yolo` / `cline --plan` | end to end in the sandbox against a local scripted model | uses `~/.cline/data/settings/providers.json` |
 | `codex` | `codex exec --sandbox workspace-write` / `read-only` | end to end in the sandbox against a local scripted model | keeps its own bubblewrap sandbox inside MultiGenz's; uses `~/.codex/auth.json` |
+| `hermes` | `hermes -z <prompt>` (one-shot) | end to end in the sandbox against a local scripted model | Hermes's own config, skills and plugins are mounted read-only |
 | `agy` | `agy --print --mode accept-edits` | experimental: flags from `agy --help`, never executed here | check with `multigenz agents run` first |
 
 Add one with `multigenz agents add <preset>`. Choose which agent plans (the orchestrating agent), which ones code,
@@ -63,9 +64,10 @@ multigenz doctor                         environment, isolation backends, adapte
 multigenz agents presets | add P         supported agent CLIs; add one to the policy (validated, backup kept)
 multigenz agents enable | disable NAME   switch an agent on or off in the policy
 multigenz roles [set ROLE A B | clear R]  who plans (orchestrating agent), codes, reviews, resolves conflicts
+multigenz roles planning auto|always|never  auto: one agent takes the goal, subagents only when needed
 multigenz agents list | run              inspect adapters; run ONE sandboxed agent -> validated commit
 multigenz plan "<goal>" [--out plan.json]   planner agent proposes a DAG; validated; nothing executed
-multigenz run "<goal>" --repo R [--plan-file plan.json] [--detach]
+multigenz run "<goal>" --repo R [--planning auto|always|never] [--plan-file plan.json] [--detach]
 multigenz runs list | show | events | audit | logs | cancel | resume
 multigenz tui [--team]                   dashboards: history, live task states, redacted logs, cancel, doctor,
                                          and the Team screen to choose each agent's role

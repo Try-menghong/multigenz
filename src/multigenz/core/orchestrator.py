@@ -30,6 +30,7 @@ from multigenz.core.readonly import ReadOnlyRunner
 from multigenz.core.recovery import Reconciler
 from multigenz.core.report import write_report
 from multigenz.core.runs import RunPaths, register_plan
+from multigenz.core.split import build_subplan, find_split_request, split_prompt
 from multigenz.core.state_machine import StateMachine
 from multigenz.errors import InvalidTransition, LeaseError, PlanValidationError, WorktreeError
 from multigenz.execution.git import Git
@@ -372,7 +373,10 @@ class Orchestrator:
                                backend=self.svc.backend, attempt_dir=lease["attempt_dir"], timeout_seconds=timeout,
                                cancel=cancel, credential_refs=self.policy.agents[agent].credentials.env,
                                feedback=feedback, attempt_number=lease["number"],
-                               mode="conflict" if lease["kind"] == "conflict" else "code")
+                               mode="conflict" if lease["kind"] == "conflict" else "code",
+                               extra_prompt=split_prompt(self.policy.orchestrator.max_subtasks,
+                                                         sorted(set().union(*self._worker_caps())))
+                               if spec.may_split and lease["kind"] != "conflict" else None)
 
             def on_event(ev: AgentEvent) -> None:
                 nonlocal n_out
@@ -472,11 +476,53 @@ class Orchestrator:
                   f"Last output lines:\n" + "\n".join(tail[-20:]))
             self._charged_failure(task, attempt_id, f"agent failed: {code}", fb, repair_from=None)
             return
+        # -- agent exited 0 and asked for subagents instead of doing the work ----------------------------
+        if spec.may_split and lease["kind"] != "conflict" and self._maybe_split(task, agent, attempt_id, outcome, tail):
+            return
         # -- agent exited 0: the claim must now be verified independently -----------------------------
         head = outcome.commit_sha or wt.base_commit
         self.sm.task(rid, task_id, S.VALIDATING, reason="agent exited 0; verifying result independently",
                      attempt_id=attempt_id, head_commit=head)
         await self._finalize(task_id, attempt_id, head)
+
+    def _worker_caps(self) -> list[set[str]]:
+        """Capability sets of the agents that may run code tasks (the workers, or every code-capable agent)."""
+        names = self.policy.roles.worker or list(self.svc.probes)
+        return [set(p.capabilities) for n in names if (p := self.svc.probes.get(n)) and p.enabled
+                and "code" in p.modes] or [set()]
+
+    def _maybe_split(self, task: dict, agent: str, attempt_id: str, outcome: AttemptOutcome, tail) -> bool:
+        """Handle an agent's request for subagents. True when the attempt was fully handled here."""
+        st, rid, task_id = self.store, self.run_id, task["task_id"]
+        text = ""
+        if outcome.log_dir and (outcome.log_dir / "stdout.log").exists():
+            text = (outcome.log_dir / "stdout.log").read_text(encoding="utf-8", errors="replace")
+        raw = find_split_request(text or "\n".join(tail))
+        if raw is None:
+            return False
+        if outcome.changed:
+            st.emit(rid, "split.ignored", task_id=task_id, attempt_id=attempt_id,
+                    payload={"agent": agent, "reason": "the agent also changed files; its work is validated instead"})
+            return False
+        existing = {t["task_id"] for t in st.list_tasks(rid)}
+        plan, issues = build_subplan(raw, policy=self.policy, engine=self.svc.engine, existing_ids=existing,
+                                     capabilities=self._worker_caps())
+        if plan is None:
+            st.emit(rid, "split.rejected", task_id=task_id, attempt_id=attempt_id,
+                    payload={"agent": agent, "issues": issues})
+            fb = ("Your request for subtasks was rejected by the orchestrator:\n- " + "\n- ".join(issues) +
+                  "\nEither do the work yourself, or reply with a corrected subtask list (and change no files).")
+            self._charged_failure(task, attempt_id, "subtask request rejected: " + "; ".join(issues)[:300], fb,
+                                  repair_from=None)
+            return True
+        ids = [t.task_id for t in plan.tasks]
+        with st.tx():
+            register_plan(st, rid, plan)
+            st.emit(rid, "task.split", task_id=task_id, attempt_id=attempt_id,
+                    payload={"agent": agent, "subtasks": ids})
+            self.sm.task(rid, task_id, S.SPLIT, reason=f"{agent} handed the goal to {len(ids)} subtasks",
+                         attempt_id=attempt_id, extra={"subtasks": ids})
+        return True
 
     def _cost_of(self, agent: str, attempt_id: str) -> float | None:
         ad = self.svc.adapters[agent]
@@ -631,7 +677,8 @@ class Orchestrator:
             self.sm.run(rid, "cancelled", reason="cancelled by request")
             write_report(st, rid, self.paths)
             return RunOutcome(rid, "cancelled")
-        ok = all(t["status"] == S.SUCCEEDED.value for t in tasks)
+        done = (S.SUCCEEDED.value, S.SPLIT.value)  # a split task is done when its subtasks are (they are tasks too)
+        ok = bool(tasks) and all(t["status"] in done for t in tasks)
         final = None
         if ok:
             head = self.merger.head()
@@ -649,7 +696,7 @@ class Orchestrator:
             st.update_run(rid, final_commit=final, integration_head=final)
             self.sm.run(rid, "succeeded", reason="all tasks validated and integrated")
         else:
-            bad = [f"{t['task_id']}={t['status']}" for t in tasks if t["status"] != S.SUCCEEDED.value]
+            bad = [f"{t['task_id']}={t['status']}" for t in tasks if t["status"] not in done]
             self.sm.run(rid, "failed", reason=("; ".join(bad) or "final integration tests failed")[:500])
         write_report(st, rid, self.paths)
         return RunOutcome(rid, "succeeded" if ok else "failed", final)

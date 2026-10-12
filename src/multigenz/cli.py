@@ -206,8 +206,18 @@ ROLE_AUTO = {
 }
 
 
+PLANNING_HELP = {
+    "always": "a planner agent splits every goal into tasks first (one extra agent run per goal)",
+    "auto": "one worker takes the goal; it asks for subagents only when the goal is too big (no planning run)",
+    "never": "one worker does the whole goal; no planning, no subagents (cheapest)",
+}
+
+
 def _show_roles(pol: Policy) -> None:
     from multigenz.config import ROLE_NAMES
+
+    mode = pol.orchestrator.planning
+    typer.echo(f"{'planning':<9} {mode}: {PLANNING_HELP[mode]}")
 
     for r in ROLE_NAMES:
         chosen = getattr(pol.roles, r)
@@ -226,6 +236,17 @@ def roles_main(ctx: typer.Context, policy: PolicyOpt = None) -> None:
     """Show who plans, codes, reviews and resolves conflicts (``multigenz roles``)."""
     if ctx.invoked_subcommand is None:
         _show_roles(_load(policy))
+
+
+@roles_app.command("planning")
+def roles_planning(
+    mode: Annotated[str, typer.Argument(help="always, auto or never.")],
+    policy: PolicyOpt = None,
+) -> None:
+    """How goals are split: always (planner first), auto (subagents only when needed) or never (one agent)."""
+    if mode not in PLANNING_HELP:
+        raise _fail("planning must be always, auto or never", 2)
+    _show_roles(_save(_policy_file(policy), planning=mode))
 
 
 @roles_app.command("set")
@@ -314,6 +335,9 @@ def run(
     mode: Annotated[str, typer.Option(help="autonomous (integrates on a run-owned branch only).")] = "autonomous",
     plan_file: Annotated[Optional[Path], typer.Option("--plan-file", help="Use this validated plan JSON instead of "
                                                       "invoking a planner agent.")] = None,
+    planning: Annotated[Optional[str], typer.Option(
+        "--planning", help="always: a planner splits the goal first; auto: one agent takes the goal and asks for "
+                           "subagents only when needed; never: one agent does it all. Default: the policy's.")] = None,
     detach: Annotated[bool, typer.Option(help="Create the run and execute it in a background worker.")] = False,
     policy: PolicyOpt = None,
     json_out: Annotated[bool, typer.Option("--json")] = False,
@@ -322,6 +346,10 @@ def run(
     from multigenz.core.driver import spawn_detached, start_run
 
     pol = _load(policy)
+    if planning is not None:
+        if planning not in ("always", "auto", "never"):
+            raise _fail("--planning must be always, auto or never", 2)
+        pol = pol.model_copy(update={"orchestrator": pol.orchestrator.model_copy(update={"planning": planning})})
     plan = _read_plan(plan_file)
     home = default_state_home()
     try:
@@ -393,9 +421,16 @@ def _print_report(rep: dict) -> None:
         typer.secho(f"  plan rejected: {issue}", fg=typer.colors.RED)
     for t in rep["tasks"]:
         v = t.get("last_validation") or {}
+        if t["status"] == "split":
+            typer.echo(f"  - {t['task_id']:<18} {'split':<10} provider={t['provider'] or '-'} handed the work to "
+                       f"subtasks: {', '.join(t.get('subtasks') or [])}")
+            continue
         typer.echo(f"  - {t['task_id']:<18} {t['status']:<10} attempts={t['attempts']} provider={t['provider'] or '-'}"
                    f"{'  ' + t['failure_reason'] if t['failure_reason'] else ''}"
                    f"{'  tests/validation: ' + ('pass' if v.get('passed') else 'FAIL') if v else ''}")
+    runs = rep.get("agent_runs") or {}
+    if runs:
+        typer.echo(f"  agent runs: {runs['planning']} planning + {runs['coding']} coding + {runs['review']} review")
     c = rep["cost"]
     typer.echo(f"  cost: measured ${c['measured_usd']} (budget ${c['budget_usd']}); {c['note']}")
     typer.echo(f"  {rep['push_policy']}")

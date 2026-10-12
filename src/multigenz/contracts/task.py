@@ -22,6 +22,7 @@ class TaskStatus(StrEnum):
     FAILED = "failed"
     BLOCKED = "blocked"
     CANCELLED = "cancelled"
+    SPLIT = "split"  # the agent delegated the task to validated subtasks instead of doing it itself
 
     @property
     def terminal(self) -> bool:
@@ -29,7 +30,7 @@ class TaskStatus(StrEnum):
 
 
 TERMINAL_STATUSES = frozenset(
-    {TaskStatus.SUCCEEDED, TaskStatus.FAILED, TaskStatus.BLOCKED, TaskStatus.CANCELLED}
+    {TaskStatus.SUCCEEDED, TaskStatus.FAILED, TaskStatus.BLOCKED, TaskStatus.CANCELLED, TaskStatus.SPLIT}
 )
 
 
@@ -56,6 +57,8 @@ class TaskSpec(BaseModel):
     shared_paths: list[str] = Field(default_factory=list)  # non-exclusive paths (e.g. README)
     required_artifacts: list[str] = Field(default_factory=list)  # must exist in the result
     validation_profile: str | None = None  # name of an administrator-defined profile
+    # Set only by the orchestrator (planning: auto) - never accepted from a planner or from a subtask request.
+    may_split: bool = False
 
     @field_validator("schema_version")
     @classmethod

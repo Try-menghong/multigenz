@@ -21,12 +21,13 @@ T = TaskStatus
 TASK_TRANSITIONS: dict[TaskStatus, frozenset[TaskStatus]] = {
     T.PENDING: frozenset({T.READY, T.BLOCKED, T.CANCELLED}),
     T.READY: frozenset({T.RUNNING, T.BLOCKED, T.FAILED, T.CANCELLED}),
-    T.RUNNING: frozenset({T.VALIDATING, T.READY, T.FAILED, T.CANCELLED}),
+    T.RUNNING: frozenset({T.VALIDATING, T.READY, T.FAILED, T.CANCELLED, T.SPLIT}),
     T.VALIDATING: frozenset({T.SUCCEEDED, T.READY, T.FAILED, T.CANCELLED}),
     T.SUCCEEDED: frozenset(),
     T.FAILED: frozenset(),
     T.BLOCKED: frozenset(),
     T.CANCELLED: frozenset(),
+    T.SPLIT: frozenset(),
 }
 
 RUN_TRANSITIONS: dict[str, frozenset[str]] = {

@@ -181,7 +181,7 @@ footer { border-top: 1px solid var(--rule); padding-block: 2rem 3rem; color: var
     <div class="hero">
       <div>
         <h1>Your coding agents, run as a team that can't merge broken work.</h1>
-        <p class="lede">MultiGenz splits a goal into tasks, hands each one to <strong>Claude Code, opencode, Cline or Codex</strong> in its own sandbox and Git worktree, runs <strong>your</strong> tests on the result, and commits only what passes to a branch it owns. It never pushes.</p>
+        <p class="lede">MultiGenz hands a goal to <strong>Claude Code, opencode, Cline, Codex or Hermes</strong>, each in its own sandbox and Git worktree, splits it into subtasks only when one agent is not enough, runs <strong>your</strong> tests on the result, and commits only what passes to a branch it owns. It never pushes.</p>
 
         <div class="install" id="install">
           <div class="tabs" role="tablist" aria-label="Install method">
@@ -242,6 +242,7 @@ run ef8faadd4d97: <span class="t-ok">SUCCEEDED</span>
             <tr><td>opencode</td><td><code>opencode run --auto</code></td><td><span class="pill ok">end to end, local test model</span></td><td><code>multigenz agents add opencode</code></td></tr>
             <tr><td>Cline</td><td><code>cline --yolo</code></td><td><span class="pill ok">end to end, local test model</span></td><td><code>multigenz agents add cline</code></td></tr>
             <tr><td>OpenAI Codex</td><td><code>codex exec</code></td><td><span class="pill ok">end to end, local test model</span></td><td><code>multigenz agents add codex</code></td></tr>
+            <tr><td>Hermes Agent</td><td><code>hermes -z</code></td><td><span class="pill ok">end to end, local test model</span></td><td><code>multigenz agents add hermes</code></td></tr>
             <tr><td>Google Antigravity</td><td><code>agy --print</code></td><td><span class="pill muted">experimental</span></td><td><code>multigenz agents add agy</code></td></tr>
           </tbody>
         </table>

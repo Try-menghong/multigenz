@@ -92,6 +92,35 @@ def set_enabled_text(text: str, agent: str, enabled: bool) -> str:
     return "".join(lines)
 
 
+def set_orchestrator_key_text(text: str, key: str, value: str) -> str:
+    """Set ``orchestrator.<key>: <value>`` (a plain scalar), keeping everything else, comments included."""
+    lines = text.splitlines(keepends=True)
+    if lines and not lines[-1].endswith("\n"):
+        lines[-1] += "\n"
+    block = _top_level_block(lines, "orchestrator")
+    if block is None:
+        at = next((i + 1 for i, ln in enumerate(lines) if re.match(r"^version\s*:", ln)), 0)
+        lines[at:at] = ["orchestrator:\n", f"  {key}: {value}\n"]
+        return "".join(lines)
+    start, end = block
+    head = lines[start]
+    if "{" in head:  # flow mapping
+        if re.search(rf"\b{re.escape(key)}\s*:", head):
+            lines[start] = re.sub(rf"(\b{re.escape(key)}\s*:\s*)[^,}}#]+", rf"\g<1>{value}", head, count=1)
+        else:
+            lines[start] = head.replace("{", "{" + f"{key}: {value}, ", 1)
+        return "".join(lines)
+    for i in range(start + 1, end):
+        m = re.match(rf"^(\s+{re.escape(key)}\s*:\s*)([^#\n]*?)(\s*#.*)?$", lines[i].rstrip("\n"))
+        if m:
+            lines[i] = m.group(1) + value + (m.group(3) or "") + "\n"
+            return "".join(lines)
+    child = next((len(lines[i]) - len(lines[i].lstrip()) for i in range(start + 1, end)
+                  if lines[i].strip() and not lines[i].lstrip().startswith("#")), 2)
+    lines.insert(start + 1, " " * child + f"{key}: {value}\n")
+    return "".join(lines)
+
+
 def short_error(exc: BaseException) -> str:
     """The human part of a policy validation error ("roles.worker: unknown agent 'x'"), without pydantic noise."""
     found = re.findall(r"Value error, (.*?) \[type=", str(exc))
@@ -99,7 +128,7 @@ def short_error(exc: BaseException) -> str:
 
 
 def save_policy_edits(path: Path, *, roles: dict[str, list[str]] | None = None,
-                      enabled: dict[str, bool] | None = None) -> tuple[Policy, Path]:
+                      enabled: dict[str, bool] | None = None, planning: str | None = None) -> tuple[Policy, Path]:
     """Apply edits, validate with the real loader, verify the result, then replace the file (backup kept)."""
     path = Path(path).expanduser()
     if not path.is_file():
@@ -109,6 +138,8 @@ def save_policy_edits(path: Path, *, roles: dict[str, list[str]] | None = None,
         text = set_enabled_text(text, name, on)
     if roles is not None:
         text = set_roles_text(text, roles)
+    if planning is not None:
+        text = set_orchestrator_key_text(text, "planning", planning)
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(text, encoding="utf-8")
     try:
@@ -116,6 +147,8 @@ def save_policy_edits(path: Path, *, roles: dict[str, list[str]] | None = None,
         for name, on in (enabled or {}).items():
             if pol.agents[name].enabled != on:
                 raise ConfigError(f"could not set agents.{name}.enabled to {on} in {path}")
+        if planning is not None and pol.orchestrator.planning != planning:
+            raise ConfigError(f"could not set orchestrator.planning to {planning!r} in {path}")
         if roles is not None:
             for r in ROLE_NAMES:
                 if getattr(pol.roles, r) != list(roles.get(r, [])):

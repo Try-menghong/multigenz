@@ -20,6 +20,11 @@ BLOCK = '''    invocations:
         stdin: prompt
         requires_help_tokens: ["--print", "--permission-mode", "\\"acceptEdits\\"", "--allowedTools", "--no-session-persistence"]
         modes: [code, conflict]
+      - name: print-plan-readonly-tools
+        argv: ["{command}", "--print", "--permission-mode", "plan", "--tools", "Read,Glob,Grep", "--no-session-persistence"]
+        stdin: prompt
+        requires_help_tokens: ["--print", "--permission-mode", "\\"plan\\"", "--tools", "--no-session-persistence"]
+        modes: [plan, review, analysis]
       - name: print-plan
         argv: ["{command}", "--print", "--permission-mode", "plan", "--no-session-persistence"]
         stdin: prompt

@@ -98,7 +98,7 @@ def test_enable_claude_pytest_script_edits_a_policy_safely(tmp_path):
     r = run()
     assert r.returncode == 0, r.stdout + r.stderr
     pol = load_policy(f)
-    assert [i.name for i in pol.agents["claude"].invocations] == ["print-accept-edits-pytest", "print-plan"]
+    assert [i.name for i in pol.agents["claude"].invocations] == ["print-accept-edits-pytest", "print-plan-readonly-tools", "print-plan"]
     assert pol.orchestrator.max_task_attempts == 4 and "# must be on PATH" in f.read_text()  # comments survive
     assert (tmp_path / "my-policy.yaml.bak").read_text() == src
     again = run()
@@ -111,7 +111,7 @@ def test_enable_claude_pytest_script_edits_a_policy_safely(tmp_path):
         f.read_text().split('"--allowedTools", ')[1].split(', "--no-session-persistence"')[0], '"Bash(python3 -m pytest:*)"'))
     up = subprocess.run([sys.executable, str(REPO_ROOT / "scripts" / "enable_claude_pytest.py"), str(old)], capture_output=True, text=True)
     assert up.returncode == 0 and "Bash(pytest:*)" in old.read_text(), up.stdout + up.stderr
-    assert [i.name for i in load_policy(old).agents["claude"].invocations] == ["print-accept-edits-pytest", "print-plan"]
+    assert [i.name for i in load_policy(old).agents["claude"].invocations] == ["print-accept-edits-pytest", "print-plan-readonly-tools", "print-plan"]
     gone = subprocess.run([sys.executable, str(REPO_ROOT / "scripts" / "enable_claude_pytest.py"), str(tmp_path / "nope.yaml")],
                           capture_output=True, text=True)
     assert gone.returncode == 2 and "no such policy file" in gone.stdout and "Traceback" not in gone.stderr

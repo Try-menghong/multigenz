@@ -11,6 +11,7 @@ from multigenz.adapters.claude import ClaudeAdapter
 from multigenz.adapters.cli_adapter import CliAdapter
 from multigenz.adapters.cline import ClineAdapter
 from multigenz.adapters.codex import CodexAdapter
+from multigenz.adapters.hermes import HermesAdapter
 from multigenz.adapters.litellm_adapter import LiteLLMAdapter
 from multigenz.adapters.opencode import OpencodeAdapter
 from multigenz.config import Policy
@@ -23,6 +24,7 @@ CLI_CLASSES: dict[str, type[CliAdapter]] = {
     "agy": AntigravityAdapter,
     "opencode": OpencodeAdapter,
     "cline": ClineAdapter,
+    "hermes": HermesAdapter,
 }
 
 

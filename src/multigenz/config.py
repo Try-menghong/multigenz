@@ -35,6 +35,14 @@ class OrchestratorCfg(_Strict):
     run_budget_usd: float | None = Field(5.0, ge=0)
     max_conflict_repairs: int = Field(1, ge=0, le=3)
     max_plan_attempts: int = Field(2, ge=1, le=5)
+    # Read-only roles (planner, reviewer) only produce text: they get a shorter leash than coding tasks.
+    plan_timeout_seconds: int = Field(300, ge=1)
+    # always: a planner agent first splits the goal into tasks (one extra agent run per goal).
+    # auto: no separate planning run; one agent takes the whole goal and either does it, or - only when the goal is
+    #       too big - replies with subtasks that MultiGenz then runs with their own agents ("subagents on demand").
+    # never: one agent does the whole goal; no planning, no splitting (cheapest).
+    planning: Literal["always", "auto", "never"] = "always"
+    max_subtasks: int = Field(8, ge=2, le=20)
     max_interruptions: int = Field(3, ge=0, le=10)
     rate_limit_retries: int = Field(3, ge=0, le=10)
     backoff_base_seconds: float = Field(2.0, gt=0)
@@ -47,7 +55,8 @@ class InvocationCfg(_Strict):
     """Administrator-defined non-interactive invocation of a CLI agent.
 
     Used only after ``requires_help_tokens`` are all present in the binary's own help output.
-    Placeholders: {command} {prompt_file} {task_file} {task_id} {workspace}.
+    Placeholders: {command} {prompt} {prompt_file} {task_file} {task_id} {workspace} ({prompt} = the prompt text,
+    for CLIs that take it only as an argument).
     """
 
     name: str

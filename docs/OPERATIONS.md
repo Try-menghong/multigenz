@@ -24,9 +24,10 @@ unsandboxed regardless).
 | `opencode` | `run --auto` (code) / `run --agent plan` (read-only roles) | real binary + local scripted model, in the sandbox |
 | `cline` | `--yolo` (code) / `--plan` (read-only roles) | real binary + local scripted model, in the sandbox |
 | `codex` | `exec --sandbox workspace-write` (code) / `exec --sandbox read-only` (read-only roles) | real binary + local scripted model, in the sandbox |
+| `hermes` | `-z {prompt}` (one-shot; prompt passed as an argument) | real binary (hermes-agent 0.19) + local scripted model, in the sandbox |
 | `antigravity` / `agy` | none: `multigenz agents add agy` writes experimental candidates | help text only |
 
-All of them read the prompt on stdin. The easy way to configure them is `multigenz init` (all supported CLIs found on
+All of them read the prompt on stdin, except Hermes, which takes it as an argument (`{prompt}`, at most 120 KB). The easy way to configure them is `multigenz init` (all supported CLIs found on
 PATH) or `multigenz agents add <preset>`; both validate the result with the real policy loader and keep a `.bak` copy.
 `multigenz agents presets` shows each preset's test status and install hint.
 
@@ -41,8 +42,9 @@ CAP_SETFCAP, so a capability-less uid 0 could not start Codex's bubblewrap, whil
 the host.
 
 **Installs outside /usr.** For npm-installed CLIs the sandbox automatically exposes the `node_modules` root the binary
-lives in and the directory of its `#!/usr/bin/env node` interpreter (never a whole prefix such as `~/.local`). Anything
-else goes in `execution.readonly_paths`.
+lives in and the directory of its `#!/usr/bin/env node` interpreter (never a whole prefix such as `~/.local`); for
+pip/pipx/uv-installed CLIs (Hermes) the virtualenv and the interpreter prefix its `pyvenv.cfg` names. Anything else goes
+in `execution.readonly_paths`.
 
 Any other CLI with a non-interactive mode can be added by hand:
 ```yaml
@@ -91,6 +93,36 @@ Edit roles without touching YAML:
 
 Both rewrite only the `roles:` block and `enabled:` flags (comments are kept), validate the result with the policy
 loader before replacing the file, and keep the previous version as `policy.yaml.bak`.
+
+### Planning and usage: one agent first, subagents only when needed
+Every agent run uses the agent's plan or API quota, so MultiGenz keeps the number of runs and the work per run small.
+`orchestrator.planning` decides how a goal is split (`multigenz roles planning auto|always|never`, the TUI Team
+screen's `p` key, or `multigenz run --planning ...` for one run; `multigenz init` writes `auto`):
+
+| mode | what happens | agent runs for a small goal | for a big goal |
+|---|---|---|---|
+| `auto` | one worker gets the whole goal. It does it itself, or - only when the goal is too big - changes nothing and replies with `{"subtasks": [...]}`; MultiGenz validates that request like a plan and runs each subtask with its own agent (in parallel where independent) | 1 | 1 + one per subtask |
+| `always` | a planner agent splits the goal first (the original behaviour) | 2 (plan + code) | 1 + one per task |
+| `never` | one worker does the whole goal; requests for subtasks are ignored | 1 | 1 |
+
+A subtask request is untrusted model output: 2 to `orchestrator.max_subtasks` subtasks, unique ids, a valid DAG,
+non-overlapping paths for independent subtasks, policy-clean paths and capabilities the workers have. A rejected
+request goes back to the agent with the reasons (a charged attempt); a request made together with file changes is
+ignored and the changes are validated. The goal task ends as `split` and counts as done once its subtasks succeeded.
+In `auto` and `never` the planner role is not used (a worker takes the goal), so the planning model never does the work.
+
+Planning itself is lean: the planner is told to only plan (no code, no commands, open files only when the plan depends on
+them, as few tasks as possible), gets the repository's file list in its prompt, has its own shorter timeout
+(`orchestrator.plan_timeout_seconds`, default 300, also used for agent reviews) and, for Claude, only read-only tools
+(`--tools Read,Glob,Grep`; older Claude versions fall back to plain plan mode). `multigenz run` prints how many agent runs
+a goal took (`agent runs: P planning + C coding + R review`).
+
+### Plugins
+MultiGenz does not run plugins itself; agents keep their own plugin systems, and the presets mount them read-only into
+that agent's sandbox: opencode's `~/.config/opencode/opencode.json` and local plugins in `~/.config/opencode/plugin(s)/`
+(npm plugins named in opencode.json are fetched by opencode, which needs `network: host`), and Hermes's
+`~/.hermes/config.yaml`, `.env`, `skills/` and `plugins/`. Plugins in a repository (`.opencode/plugin/`) load from the
+task's worktree. Plugin code runs inside the agent's sandbox with that agent's permissions only.
 
 ### Validation profiles
 Fixed argv lists run in the sandbox against an *exported copy* of the exact tree under test (no network, no `.git`).
