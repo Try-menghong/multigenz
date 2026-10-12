@@ -350,3 +350,77 @@ def test_api_provider_models_become_a_coding_agent_and_a_text_planner(tmp_path, 
     assert all(row["auth"] in (f"Bearer {key}", key) for row in chats)      # every call carried the key
     leaked = [str(f) for f in (tmp_path / "state").rglob("*") if f.is_file() and key.encode() in f.read_bytes()]
     assert leaked == []                                                      # logs, events, configs: redacted / absent
+
+
+async def test_split_view_shows_three_real_clis_working_at_once(tmp_path, mock, monkeypatch):
+    """A goal typed in the TUI: opencode plans three independent tasks, then opencode, Codex and Cline work on them
+    at the same time (one each), and the run dashboard shows a live pane per agent while they work."""
+    from multigenz.config import load_policy
+    from multigenz.core.runs import open_store
+    from multigenz.tui.app import MultiGenzApp, RunScreen
+    from multigenz.tui.panes import AgentGrid
+
+    clis = ("opencode", "codex", "cline")
+    if not all(which(c) for c in clis):
+        pytest.skip("needs opencode, codex and cline")
+    base_url, log = mock
+    parts = ["api", "web", "docs"]
+    monkeypatch.setattr(mock_llm, "PLAN_PARTS", parts)
+    monkeypatch.setattr(mock_llm, "CODE_DELAY", 4.0)       # the model "thinks", so the three agents overlap
+    files = provider_files(tmp_path, base_url)
+    policy = write_policy(tmp_path, {c: ["architecture", "coding"] for c in clis}, files,
+                          extra={c: {"max_concurrent": 1} for c in clis})
+    pol = json.loads(policy.read_text())
+    pol["orchestrator"].update(planning="always", max_parallel_agents=3)
+    pol["roles"] = {"planner": ["opencode"], "worker": list(clis)}
+    pol["validation"]["profiles"]["exists"]["commands"][0]["argv"] = ["/usr/bin/test", "-f", "README.md"]
+    policy.write_text(json.dumps(pol))
+    repo = make_repo(tmp_path)
+    for k, v in {"MOCK_API_KEY": "dummy", "OPENAI_API_KEY": "dummy", "PATH": os.environ["PATH"] + ":" + SEARCH}.items():
+        monkeypatch.setenv(k, v)                             # the detached run worker inherits these
+    home = tmp_path / "state"
+    app = MultiGenzApp(home, policy=load_policy(policy), policy_path=policy, repo=repo)
+
+    async def wait_for(pilot, cond, seconds):
+        for _ in range(int(seconds * 10)):
+            await pilot.pause(0.1)
+            if cond():
+                return True
+        return False
+
+    async with app.run_test(size=(180, 50)) as pilot:
+        for ch in "Create api.txt, web.txt and docs.txt":
+            await pilot.press("space" if ch == " " else ch)
+        await pilot.press("enter")
+        assert await wait_for(pilot, lambda: isinstance(app.screen, RunScreen), 60)
+        screen = app.screen
+        grid = screen.query_one("#agents", AgentGrid)
+
+        def coding():
+            return [p for p in grid.panes() if p.worker["kind"] == "code"]
+
+        assert await wait_for(pilot, lambda: any(p.worker["kind"] == "plan" for p in grid.panes()), 120)
+        assert await wait_for(pilot, lambda: len([p for p in coding() if p.worker["active"]]) == 3, 240), \
+            [(p.worker["task_id"], p.worker["agent"], p.worker["status"]) for p in grid.panes()]
+        at_once = {p.worker["agent"]: p.worker["task_id"] for p in coding() if p.worker["active"]}
+        assert set(at_once) == set(clis) and set(at_once.values()) == set(parts)
+        assert "agents working: 3" in str(screen.query_one("#run-header").content)
+
+        def status():
+            st = open_store(home, readonly=True)
+            try:
+                return st.get_run(screen.run_id)["status"]
+            finally:
+                st.close()
+
+        assert await wait_for(pilot, lambda: status() in ("succeeded", "failed", "cancelled"), 400), status()
+        assert status() == "succeeded"
+        assert await wait_for(pilot, lambda: all(not p.worker["active"] for p in grid.panes()), 30)
+        for p in grid.panes():                               # the planner's pane too
+            assert p.text().strip(), f"{p.worker['kind']} pane of {p.worker['agent']} showed no output"
+            assert "\x1b[" not in p.text()                    # colours rendered, not printed as escape codes
+        rid = screen.run_id
+    for part in parts:
+        shown = subprocess.run(["git", "show", f"multigenz/run-{rid}/integration:{part}.txt"], cwd=repo,
+                               capture_output=True, text=True)
+        assert shown.returncode == 0 and mock_llm.FILE_TEXT in shown.stdout, part

@@ -64,6 +64,15 @@ FastAPI service), `tests/security` (regressions), `tests/contract`, `tests/suppo
   unknown command, /planning, /repo refusing a non-repository, history, /team, /runs and back; /model directly, through
   the agent and model pickers and from the Team screen's `m`, a CLI without a model option refused; a goal typed at the
   prompt runs through the detached worker to a merged commit on its run branch while the checkout stays untouched).
+- **Split view.** `tests/unit/test_panes.py` (following a growing log, starting late near the end, which runs get a
+  pane, colours kept while other escape codes and secrets hidden between colour codes are not) and
+  `tests/integration/test_split_view.py`: a goal typed at the home prompt, a scripted planner splits it into three
+  tasks, three different agents work at once — the dashboard shows the planner's pane and then three live panes at the
+  same time, each with only its own agent's lines (stdout and stderr), secrets redacted, and their final state when the
+  run succeeds; the state directory's path itself contains a secret value, so panes must not depend on redacted event
+  payloads. With the real binaries, `test_split_view_shows_three_real_clis_working_at_once`: opencode plans three tasks
+  and opencode, Codex and Cline then work at the same time (the mock model waits 4 s per answer so they overlap); three
+  panes are active at once, every pane shows output without raw escape codes, and all three files are integrated.
 - `tests/contract/fixtures/help/` holds the real `--help` output of the CLI versions the built-in invocations were written
   for (agy's from a user's machine); the contract tests fail if a shipped invocation no longer verifies against them.
 
@@ -82,6 +91,8 @@ FastAPI service), `tests/security` (regressions), `tests/contract`, `tests/suppo
 ## Recorded results (2026-10-12)
 | run | where | result |
 |---|---|---|
+| full suite after the home screen, pet and model choice (commit b787dc0), dev tree, Python 3.13, `MULTIGENZ_TEST_INSTALLER=1`, shellcheck, unraisable-exception warnings as errors | this container | 349 passed |
+| `scripts/verify_clean_install.sh` for the same commit (wheel in a fresh Python 3.12.3 venv) | this container | 348 passed, 1 skipped (install-from-checkout needs `src/`) |
 | full suite, dev tree, Python 3.13, with `MULTIGENZ_TEST_INSTALLER=1`, shellcheck and unraisable-exception warnings as errors (roles, Team screen, planning modes, Hermes, plugins, API providers) | this container | 324 passed |
 | `scripts/verify_clean_install.sh` (wheel in a fresh Python 3.12.3 venv) | this container | 323 passed, 1 skipped (install-from-checkout needs `src/`) |
 | `scripts/smoke_agents.sh` with codex, opencode, cline pointed at the mock model | this container | 3 of 3 validated |

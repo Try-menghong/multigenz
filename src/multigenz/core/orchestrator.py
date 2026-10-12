@@ -75,7 +75,9 @@ class Orchestrator:
             raise WorktreeError("integration worktree is missing; cannot continue this run")
         self.merger = Merger(self.git, store, run_id, self.integration_wt, self.paths.scratch)
         self.budget = Budget(self.policy.orchestrator.run_budget_usd, store, run_id)
-        self.readonly = ReadOnlyRunner(svc, self.git, self.paths.run_dir / "readonly", self.budget, run_id=run_id)
+        self.readonly = ReadOnlyRunner(svc, self.git, self.paths.run_dir / "readonly", self.budget, run_id=run_id,
+                                       on_call=lambda kind, tid, cid, payload: store.emit(
+                                           run_id, kind, task_id=tid, attempt_id=cid, payload=payload))
         make = pipeline_factory or IntegrationPipeline
         self.pipeline = make(self.git, self.policy, svc.redactor, self.merger, runner=svc.runner, paths=self.paths,
                              agent_reviewer=AgentReviewer(svc, self.readonly, self.git, svc.redactor))

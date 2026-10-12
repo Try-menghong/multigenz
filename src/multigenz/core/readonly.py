@@ -10,6 +10,7 @@ import json
 import re
 import shutil
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 
 from multigenz.contracts.agent import CancellationToken
@@ -48,9 +49,16 @@ def extract_json_object(text: str) -> dict | None:
     return None
 
 
+CALL_STARTED, CALL_FINISHED = "agent.call.started", "agent.call.finished"
+
+
 class ReadOnlyRunner:
-    def __init__(self, svc: Services, git: Git, work_root: Path, budget: Budget, *, run_id: str):
+    def __init__(self, svc: Services, git: Git, work_root: Path, budget: Budget, *, run_id: str,
+                 on_call: Callable[[str, str, str, dict], None] | None = None):
+        """``on_call(kind, task_id, call_id, payload)`` announces each call (for live views); its logs are in
+        ``<work_root>/<call_id>/logs``."""
         self.svc, self.git, self.work_root, self.budget, self.run_id = svc, git, work_root, budget, run_id
+        self.on_call = on_call
 
     async def ask(self, agent: str, mode: str, *, task_id: str, objective: str, extra_prompt: str, treeish: str,
                   feedback: str | None = None, number: int = 1, timeout: int | None = None,
@@ -66,6 +74,9 @@ class ReadOnlyRunner:
         base = self.work_root / attempt_id
         ws = base / "tree"
         self.git.export_tree(treeish, ws)
+        outcome = "failed"
+        if self.on_call:
+            self.on_call(CALL_STARTED, task_id, attempt_id, {"agent": agent, "mode": mode, "number": number})
         try:
             ctx = make_context(run_id=self.run_id, task_id=task_id, attempt_id=attempt_id, worktree=ws,
                                backend=self.svc.backend, attempt_dir=base, timeout_seconds=task.timeout_seconds,
@@ -76,7 +87,11 @@ class ReadOnlyRunner:
             res = adapter.result(attempt_id)
             self.budget.record(getattr(adapter, "costs", {}).get(attempt_id) if adapter.provider_class == "api" else None)
             if res is None or not res.success:
-                raise AgentCallFailed(agent, (res.error_code if res else None) or "no_result")
+                outcome = (res.error_code if res else None) or "no_result"
+                raise AgentCallFailed(agent, outcome)
+            outcome = "finished"
             return adapter.output_text(attempt_id)
         finally:
             shutil.rmtree(ws, ignore_errors=True)
+            if self.on_call:
+                self.on_call(CALL_FINISHED, task_id, attempt_id, {"agent": agent, "mode": mode, "status": outcome})

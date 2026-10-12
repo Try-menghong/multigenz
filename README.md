@@ -55,6 +55,14 @@ its live dashboard opens (Esc comes back). Type `/` for commands; Tab completes,
 | `/planning always\|auto\|never` | how much planning a goal gets |
 | `/repo PATH` · `/runs` · `/doctor` · `/init` · `/help` · `/clear` · `/quit` | |
 
+### Watching several agents at once
+When the orchestrator gives work to several agents at the same time, the run's dashboard splits into a live pane per
+agent — up to four, side by side or 2 × 2 — each following that agent's output as it works (redacted), with its task,
+role, agent, model, state and time. Finished panes stay until newer work needs the room; the planner and reviewers get
+panes too. `v` switches the split view off and on. No second terminal needed.
+
+![Split view: opencode, Codex and Cline working at the same time](docs/images/tui-split.png)
+
 ### Choosing models
 Every agent can be pointed at a model: Claude Code (`opus`, `sonnet`, … or a full model name), Codex (e.g.
 `gpt-5-codex`), opencode (`provider/model`), Cline, Hermes, and API-provider agents. The choices are asked from the tool
@@ -126,6 +134,7 @@ commits before continuing and never re-executes finished work.
 | Installer and download page | full install/upgrade/uninstall into a throwaway HOME, `curl … \| bash` from the served page, page checked in Chromium (desktop/phone, light/dark) | the public site is not deployed yet |
 | LiteLLM adapter | injected fake completion | no live provider call |
 | TUI (home prompt, /commands, Team, models, providers, runs) | Textual pilot tests, including a goal typed at the prompt that runs to a merged commit on its run branch | not manually exercised in a real terminal |
+| Split view | pilot tests: three scripted agents working at once show three live panes, each with only its own output, secrets redacted; and real opencode, Codex and Cline working at the same time on three planned tasks (local scripted model) | not manually exercised in a real terminal |
 | Choosing a model | real opencode, Codex, Cline and Hermes binaries: the model set with `agents model` is the one every model request asks for (local scripted server); Claude Code's `--model` checked against its real `--help` | no run against a real provider here |
 
 Not implemented: pushing, deployment, an approval workflow (the `approvals` table exists but nothing grants anything),

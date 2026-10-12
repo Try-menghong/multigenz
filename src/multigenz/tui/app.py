@@ -19,6 +19,7 @@ from multigenz.core.runs import open_store
 from multigenz.tui import data
 
 REFRESH_SECONDS = 1.0
+PANE_REFRESH_SECONDS = 0.5  # the run dashboard tails the agents' logs this often
 
 
 class ConfirmScreen(ModalScreen[bool]):
@@ -79,8 +80,11 @@ class LogScreen(Screen):
 
 
 class RunScreen(Screen):
+    """A run's dashboard: header, task table, a live pane per working agent (split view), and the event log."""
+
     BINDINGS = [
         Binding("escape", "app.pop_screen", "Back"),
+        Binding("v", "split", "Split view"),
         Binding("l", "logs", "Logs"),
         Binding("c", "cancel", "Cancel run"),
         Binding("a", "audit", "Audit"),
@@ -91,11 +95,18 @@ class RunScreen(Screen):
         super().__init__()
         self.run_id = run_id
         self._seq = 0
+        self.split = True
 
     def compose(self) -> ComposeResult:
+        from multigenz.tui.panes import AgentGrid
+
+        pol = getattr(self.app, "policy", None)
+        models = {n: a.model for n, a in pol.agents.items()} if pol is not None else {}
         yield Header()
         yield Static("", id="run-header")
         yield DataTable(id="tasks", cursor_type="row")
+        yield AgentGrid(self.app.redactor, models, id="agents")  # type: ignore[attr-defined]
+        yield Static("", id="agents-note")
         yield RichLog(id="events", wrap=True, highlight=False, markup=False, max_lines=500)
         yield Footer()
 
@@ -103,24 +114,43 @@ class RunScreen(Screen):
         t = self.query_one("#tasks", DataTable)
         t.add_columns("task", "status", "provider", "attempts", "validation", "note")
         self.refresh_data()
-        self.set_interval(REFRESH_SECONDS, self.refresh_data)
+        self.set_interval(PANE_REFRESH_SECONDS, self.refresh_data)
+
+    def action_split(self) -> None:
+        self.split = not self.split
+        self.refresh_data()
+        self.app.notify("Split view " + ("on: a live pane per working agent" if self.split else "off"))
 
     def action_refresh(self) -> None:
         self.refresh_data()
 
     def refresh_data(self) -> None:
+        from multigenz.tui.panes import AgentGrid, workers
+
         store = open_store(self.app.home, readonly=True)  # type: ignore[attr-defined]
         try:
             hdr = data.run_header(store, self.run_id)
             rows = data.tasks(store, self.run_id)
             evs = data.events(store, self.run_id, after_seq=self._seq)
+            ws = workers(store, self.run_id, self.app.home)  # type: ignore[attr-defined]
         finally:
             store.close()
+        grid = self.query_one("#agents", AgentGrid)
+        if self.split:
+            grid.sync(ws)
+        else:
+            grid.display = False
+        working = sum(1 for w in ws if w["active"])
+        note = self.query_one("#agents-note", Static)
+        note.display = self.split and grid.hidden_active > 0
+        note.update(f"+{grid.hidden_active} more agents working (see the task table)")
+        self.set_class(bool(self.split and grid.display), "-split")
         r = hdr["run"]
         counts = " ".join(f"{k}={v}" for k, v in sorted(hdr["counts"].items()))
         cancel = "  CANCEL REQUESTED" if r.get("cancel_requested") else ""
         self.query_one("#run-header", Static).update(
-            f"run {r.get('run_id')}  status={str(r.get('status')).upper()}{cancel}\n"
+            f"run {r.get('run_id')}  status={str(r.get('status')).upper()}{cancel}   "
+            f"agents working: {working}\n"
             f"goal: {r.get('objective')}\nintegration: {r.get('integration_branch')}  "
             f"final: {r.get('final_commit') or '-'}\ntasks: {counts or '-'}   (pushing/deploying: disabled)")
         table = self.query_one("#tasks", DataTable)
@@ -346,6 +376,14 @@ class MultiGenzApp(App):
     #run-header { height: 6; padding: 0 1; border-bottom: solid $primary; }
     #tasks { height: 40%; }
     #events { height: 1fr; border-top: solid $primary; }
+    RunScreen.-split #tasks { height: auto; max-height: 25%; }
+    RunScreen.-split #events { height: 7; }
+    #agents { height: 1fr; grid-gutter: 0 1; padding: 0 1; }
+    .agent-pane { height: 1fr; border: round $primary-darken-1; }
+    .agent-pane.-active { border: round $warning; }
+    .pane-title { height: 1; padding: 0 1; }
+    .pane-log { height: 1fr; scrollbar-size-vertical: 1; }
+    #agents-note { height: auto; padding: 0 2; color: $warning; }
     """
 
     def __init__(self, home: Path, policy=None, policy_error: str | None = None, policy_path: Path | None = None,

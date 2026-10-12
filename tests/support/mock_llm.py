@@ -42,6 +42,8 @@ SPLIT_REQUEST = {"subtasks": [
      "required_capabilities": ["coding"]},
     {"task_id": "part-b", "title": "part b", "objective": "Create part-b.txt", "allowed_paths": ["part-b.txt"],
      "required_capabilities": ["coding"]}]}
+PLAN_PARTS: list[str] | None = None  # tests set this: the planner answer is one independent task per part (<part>.txt)
+CODE_DELAY = 0.0  # tests set this: seconds before answering a coding turn, so agents working in parallel overlap
 PLAN = {"schema_version": 1, "summary": "create the requested file", "tasks": [{
     "schema_version": 1, "task_id": "create-file", "title": "Create " + FILE_NAME,
     "objective": "Create the file " + FILE_NAME, "dependencies": [], "allowed_paths": [FILE_NAME],
@@ -77,9 +79,21 @@ def _fill(schema: dict, values: dict) -> dict:
     return args
 
 
+def plan_doc() -> dict:
+    """The planner's answer: the one-file plan, or one independent task per ``PLAN_PARTS`` entry."""
+    if not PLAN_PARTS:
+        return PLAN
+    return {"schema_version": 1, "summary": f"{len(PLAN_PARTS)} independent parts", "tasks": [
+        {"schema_version": 1, "task_id": part, "title": f"Create {part}.txt",
+         "objective": f"Create the file {part}.txt", "dependencies": [], "allowed_paths": [f"{part}.txt"], "required_capabilities": ["coding"],
+         "acceptance_commands": [], "shared_paths": [], "required_artifacts": [f"{part}.txt"],
+         "validation_profile": None} for part in PLAN_PARTS]}
+
+
 def file_for(body: dict) -> str:
-    """The file a coding request creates: per subtask when splitting (``# Task part-a: ...`` -> part-a.txt)."""
-    if SPLIT:
+    """The file a coding request creates: per task when splitting or with ``PLAN_PARTS`` (``# Task api: ...`` ->
+    api.txt)."""
+    if SPLIT or PLAN_PARTS:
         for t in _texts(body.get("messages") or body.get("input") or []):
             m = re.search(r"# Task ([a-z0-9][a-z0-9_-]*):", t)
             if m and m.group(1) != "goal":
@@ -159,7 +173,7 @@ def text_answer(body: dict) -> str | None:
     if SPLIT and any(SPLIT_MARKER in t for t in texts):
         return json.dumps(SPLIT_REQUEST)
     if is_planning(body):
-        return json.dumps(PLAN)
+        return json.dumps(plan_doc())
     if is_review(body):
         return json.dumps(REVIEW)
     return None
@@ -255,6 +269,8 @@ class Handler(BaseHTTPRequestHandler):
         answer = text_answer(body)
         call = None if answer is not None else next_call(_norm_tools(body.get("tools")), results, called,
                                                          file_for(body))
+        if answer is None and results == 0 and CODE_DELAY:
+            time.sleep(CODE_DELAY)
         final = answer if answer is not None else FINAL_TEXT
         model = body.get("model", "mock-model")
         cid = "chatcmpl-" + uuid.uuid4().hex[:12]
@@ -290,6 +306,8 @@ class Handler(BaseHTTPRequestHandler):
         answer = text_answer(body)
         call = None if answer is not None else next_call(_norm_tools(body.get("tools")), results, called,
                                                          file_for(body))
+        if answer is None and results == 0 and CODE_DELAY:
+            time.sleep(CODE_DELAY)
         final = answer if answer is not None else FINAL_TEXT
         rid = "resp_" + uuid.uuid4().hex[:12]
         model = body.get("model", "mock-model")

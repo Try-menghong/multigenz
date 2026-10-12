@@ -52,6 +52,10 @@ def format_event(e: dict) -> str:
         return f"#{e['seq']} RUN {p.get('from')} -> {p.get('to')}  {p.get('reason', '')}"
     if e["kind"] == "validation.result":
         return f"#{e['seq']} {e['task_id']}: validation {'PASS' if p.get('passed') else 'FAIL'}"
+    if e["kind"] == "agent.call.started":
+        return f"#{e['seq']} {e['task_id']}: {p.get('mode')} call to {p.get('agent')} started"
+    if e["kind"] == "agent.call.finished":
+        return f"#{e['seq']} {e['task_id']}: {p.get('mode')} call to {p.get('agent')} {p.get('status')}"
     if e["kind"] in ("attempt.started", "attempt.finished"):
         return f"#{e['seq']} {e['task_id']}: {e['kind']} {p.get('provider', '')} {p.get('status', '')} {p.get('error_code') or ''}"
     return f"#{e['seq']} {e['kind']} {e['task_id'] or ''} {str(p)[:120]}"

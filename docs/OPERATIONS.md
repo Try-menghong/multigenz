@@ -94,6 +94,16 @@ Edit roles without touching YAML:
 Both rewrite only the `roles:` block and `enabled:` flags (comments are kept), validate the result with the policy
 loader before replacing the file, and keep the previous version as `policy.yaml.bak`.
 
+### Watching a run: the split view
+The run dashboard (`/runs` → a run, or the run a goal typed on the home screen starts) shows the task table, the event
+log and, between them, a live pane per agent run: coding and conflict attempts, and the planner and reviewer calls.
+Panes follow the attempt's `stdout.log`/`stderr.log` as they are written (stderr dimmed; colours kept; logs are redacted
+when written and again when shown, including secrets hidden between colour codes). Active runs come first, up to four
+panes (1–3 side by side, four as 2 × 2); the remaining room shows the most recently started finished runs with their
+final state. More than four agents working at once: the extra ones are counted under the panes and listed in the task
+table. `v` toggles the split view; `l` still opens a task's full logs. Planner and reviewer calls are announced as
+`agent.call.started` / `agent.call.finished` events (agent, mode; no paths), so they also appear in the event log.
+
 ### Models: which model each agent uses
 `agents.<name>.model` picks the model. For a CLI agent MultiGenz passes it as `--model <name>` — but only after the
 installed binary's own `--help` shows that option for every invocation it will use (Claude Code, Codex, opencode, Cline,
