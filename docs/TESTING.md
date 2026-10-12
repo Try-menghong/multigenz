@@ -100,6 +100,8 @@ FastAPI service), `tests/security` (regressions), `tests/contract`, `tests/suppo
 ## Recorded results (2026-10-12)
 | run | where | result |
 |---|---|---|
+| full suite with the Claude Code-style TUI (commit 3805c29), dev tree, Python 3.13, `MULTIGENZ_TEST_INSTALLER=1`, shellcheck, unraisable-exception warnings as errors; includes real opencode/Codex plan-first and opencode/Codex/Cline split view | this container | 369 passed |
+| `scripts/verify_clean_install.sh` for the same commit (wheel in a fresh Python 3.12.3 venv) | this container | 368 passed, 1 skipped (install-from-checkout needs `src/`) |
 | full suite with the split view (commit 204e840), dev tree, Python 3.13, `MULTIGENZ_TEST_INSTALLER=1`, shellcheck, unraisable-exception warnings as errors; includes real opencode, Codex and Cline working at once in the TUI | this container | 356 passed |
 | full suite after the home screen, pet and model choice (commit b787dc0), dev tree, Python 3.13, `MULTIGENZ_TEST_INSTALLER=1`, shellcheck, unraisable-exception warnings as errors | this container | 349 passed |
 | `scripts/verify_clean_install.sh` for the same commit (wheel in a fresh Python 3.12.3 venv) | this container | 348 passed, 1 skipped (install-from-checkout needs `src/`) |
