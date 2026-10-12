@@ -123,12 +123,33 @@ rewritten; the file is validated before it replaces the old one.
 
 ### The interactive home screen
 `multigenz` with no arguments on a terminal opens the home screen: the pet, the repository goals run in (the git
-repository around the current directory; `/repo PATH` changes it), the policy file, the planning mode and the team with
-each agent's model, the last runs, and a prompt. Text that does not start with `/` is a goal: it starts a run exactly
-like `multigenz run "<goal>" --repo <repo> --detach` and opens its dashboard. Commands: `/model`, `/team`, `/agents`,
-`/providers`, `/planning`, `/repo`, `/runs`, `/doctor`, `/init`, `/help`, `/clear`, `/quit` (`/exit`). Tab completes
-commands, agent names and planning modes; ↑/↓ recall earlier lines; `ctrl+t` Team, `ctrl+r` runs, `ctrl+q` quits.
-Without a terminal (a pipe, CI), `multigenz` prints its help instead.
+repository around the current directory; `/repo PATH` changes it), the policy file, standing notes, the planning mode
+and the team with each agent's model, the last runs, and a prompt. Once you start, the welcome box keeps only the
+essentials (`/status` and `/runs` show the rest). Without a terminal (a pipe, CI), `multigenz` prints its help instead.
+
+- **A goal** (text not starting with `/` or `#`) starts a run exactly like `multigenz run "<goal>" --repo <repo>
+  --detach`, with the repository's standing notes appended. Its progress is shown under the messages — spinner, elapsed
+  time, tasks done, agents working, a checklist of tasks with the agent on each — and when it ends a summary (integrated
+  tasks, branch and commit, failures with reasons, report path) is written and the terminal bell rings. `Ctrl+O` (or
+  `/open`) opens the run's dashboard with a live pane per agent. Esc on an empty prompt offers to cancel it.
+- **Plan first** (Shift+Tab, or `/plan GOAL`): the planner agent plans read-only (nothing is created or run), the plan
+  is shown — tasks, the files each may change, dependencies, capabilities — and a confirmation is asked. Yes starts a
+  run with exactly that plan (it is not planned again); no discards it.
+- **The prompt:** Enter sends; `\` + Enter or Ctrl+J (Shift+Enter / Alt+Enter where the terminal reports them) adds a
+  line; pasted text keeps its lines. `/` opens a command menu (↑/↓ choose, Enter runs, Tab completes, Esc closes);
+  arguments are completed too. `@` lists the files of the repository's HEAD (what the agents' worktrees contain). `?`
+  lists the shortcuts. ↑/↓ on the first/last line recall earlier lines; history is kept in
+  `$MULTIGENZ_HOME/prompt-history.jsonl` (0600, secrets from the environment redacted).
+- **Standing notes** (`# text`, `/memory [add TEXT|remove N|clear]`) are kept per repository in
+  `~/.config/multigenz/notes/` (0600) — never in the repository — and appended to every goal started from the TUI.
+- **Commands:** `/model`, `/team`, `/plan`, `/agents`, `/providers`, `/planning`, `/memory`, `/status`, `/cost`,
+  `/runs`, `/open`, `/resume` (continues an interrupted run in the background and follows it; refuses a finished one),
+  `/cancel`, `/repo`, `/doctor`, `/init`, `/theme` (remembered in `~/.config/multigenz/tui.json`), `/export [PATH]`
+  (messages to a 0600 file, secrets redacted, and the clipboard; default `$MULTIGENZ_HOME/exports/`), `/help`,
+  `/clear`, `/quit`. Keys: `Ctrl+O` dashboard, `Ctrl+T` team, `Ctrl+R` runs, `Ctrl+L` clear, `Ctrl+Q` quit.
+
+See [TUI_COMPARISON.md](TUI_COMPARISON.md) for how this compares with Claude Code and what was left out on purpose
+(no `!` shell mode: MultiGenz never runs commands typed into its prompt).
 
 ### API providers: use any model with an API key
 Besides the subscription CLIs, an agent can use a model from an API provider: OpenRouter, OpenAI, Anthropic, DeepSeek,

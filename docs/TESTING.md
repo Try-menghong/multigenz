@@ -64,6 +64,15 @@ FastAPI service), `tests/security` (regressions), `tests/contract`, `tests/suppo
   unknown command, /planning, /repo refusing a non-repository, history, /team, /runs and back; /model directly, through
   the agent and model pickers and from the Team screen's `m`, a CLI without a model option refused; a goal typed at the
   prompt runs through the detached worker to a merged commit on its run branch while the checkout stays untouched).
+- **Claude Code-style TUI.** `tests/unit/test_complete.py` (command, argument and `@` file completion, which items run
+  on Enter, files = HEAD only), `tests/unit/test_notes_history.py` (notes per repository, outside it, 0600, appended to
+  goals; history across restarts, secrets redacted, draft kept) and `tests/integration/test_tui_home.py` (pilot: menu
+  ↑/↓/Enter/Tab/Esc, several lines, `@` files, `?`; a `#` note reaching the run's objective while the repository stays
+  clean; plan first declined — nothing created — then confirmed via `/plan`, the run having exactly the shown tasks and
+  no second planning; inline progress with Esc cancelling the run and the bell; `/status`, `/resume` of a run whose
+  worker never started, `/cost`, `/theme` remembered, `/export` without secrets, history in a new session). With the
+  real binaries, `test_plan_first_mode_with_real_clis`: opencode plans read-only, nothing exists until confirmation,
+  then opencode and Codex carry out exactly that plan.
 - **Split view.** `tests/unit/test_panes.py` (following a growing log, starting late near the end, which runs get a
   pane, colours kept while other escape codes and secrets hidden between colour codes are not) and
   `tests/integration/test_split_view.py`: a goal typed at the home prompt, a scripted planner splits it into three

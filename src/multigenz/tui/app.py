@@ -355,8 +355,12 @@ class MultiGenzApp(App):
     #home-team { height: auto; margin-top: 1; }
     #home-recent { height: auto; }
     #home-log { height: 1fr; margin: 0 1; background: $background; }
-    #home-hints { height: auto; max-height: 13; margin: 0 2; padding: 0 1; border-left: tall $accent; }
-    #home-input { margin: 0 1; border: round $accent; }
+    #home-live { height: auto; max-height: 16; margin: 0 2; }
+    #home-menu { height: auto; max-height: 12; margin: 0 2; border: none; border-left: tall $accent; padding: 0;
+                 background: $background; }
+    #home-input { margin: 0 1; border: round $accent; padding: 0 1; }
+    #home-input:focus { border: round $accent-lighten-1; }
+    #statusline { height: 1; margin: 0 1; }
     #pa-agents { height: auto; max-height: 16; }
     #ms-title, #ms-note { height: auto; padding: 0 1; color: $text-muted; }
     #ms-models { height: 1fr; border: solid $primary; }
@@ -399,7 +403,32 @@ class MultiGenzApp(App):
         self.repo = Path(repo or Path.cwd())  # where goals typed on the home screen run
         self.redactor = Redactor.from_environ(os.environ)
 
+    # -- settings that survive restarts (theme) ------------------------------------------------------------------
+    @staticmethod
+    def settings_path() -> Path:
+        return Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "multigenz" / "tui.json"
+
+    def load_settings(self) -> dict:
+        import json
+
+        try:
+            data = json.loads(self.settings_path().read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def save_settings(self, **values) -> None:
+        import json
+
+        data = {**self.load_settings(), **values}
+        path = self.settings_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
     def on_mount(self) -> None:
+        theme = self.load_settings().get("theme")
+        if isinstance(theme, str) and theme in self.available_themes:
+            self.theme = theme
         if self.start == "runs":
             self.push_screen(RunsScreen())
         else:
@@ -411,14 +440,16 @@ class MultiGenzApp(App):
 
             self.push_screen(TeamScreen(self.policy_path))
 
-    def submit_run(self, goal: str, repo: Path, plan_file: Path | None) -> str:
-        """Create the run (validating policy/plan/isolation up front) and start a detached worker."""
+    def submit_run(self, goal: str, repo: Path, plan_file: Path | None, plan=None) -> str:
+        """Create the run (validating policy/plan/isolation up front) and start a detached worker. ``plan`` is an
+        already validated PlanDocument (e.g. one the user confirmed on the home screen)."""
         from multigenz.contracts.task import PlanDocument
         from multigenz.core.driver import spawn_detached, start_run
 
         if self.policy is None:
             raise RuntimeError(f"no valid policy: {self.policy_error}")
-        plan = PlanDocument.model_validate_json(plan_file.read_text()) if plan_file else None
+        if plan is None and plan_file:
+            plan = PlanDocument.model_validate_json(plan_file.read_text())
 
         async def create() -> str:
             rid, _ = await start_run(self.policy, objective=goal, repo=repo, plan=plan, home=self.home, execute=False)

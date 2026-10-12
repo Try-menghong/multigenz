@@ -41,19 +41,34 @@ private, the installer uses your SSH key (`git@github.com:...`) when https needs
 ### The interactive home screen
 Run `multigenz` with no arguments in a terminal (from inside your repository) and you get the home screen: the
 MultiGenz pet — three little heads on one body, one team of agents — the team with each agent's model, and a prompt.
-Type what you want built and press Enter: a run starts in that repository on its own `multigenz/run-<id>/…` branch and
-its live dashboard opens (Esc comes back). Type `/` for commands; Tab completes, ↑/↓ recall earlier lines.
+Type what you want built and press Enter: a run starts on its own `multigenz/run-<id>/…` branch and its progress
+appears right there — a spinner, the elapsed time and a checklist of its tasks with the agent on each — until a summary
+(and the terminal bell) says what was integrated. `Ctrl+O` opens the run's live split view. It works much like Claude
+Code; [docs/TUI_COMPARISON.md](docs/TUI_COMPARISON.md) compares the two feature by feature.
 
 ![MultiGenz home screen](docs/images/tui-home.png)
+
+- **Prompt:** several lines (`\` + Enter or Ctrl+J), `/` opens a command menu (↑/↓, Enter, Tab), `@` mentions a file of
+  the repository, `#` adds a standing note for this repository (added to every goal; never written into the
+  repository), `?` lists the shortcuts, ↑/↓ recall earlier lines (kept across sessions, secrets redacted).
+- **Shift+Tab: plan first.** The planner agent plans read-only and the plan is shown — tasks, the files each may change,
+  their order — and nothing runs until you confirm (`/plan GOAL` does it once).
+- **Esc** closes the menu, clears the prompt, or offers to cancel the run in progress.
+- **Status line:** mode, repository and branch, planning mode, agents, runs in progress.
+
+![A run's progress inline, with the command menu open](docs/images/tui-live.png)
 
 | Command | What it does |
 |---|---|
 | `/model [agent] [model\|default]` | change the model an agent uses (a picker when no model is given) |
 | `/team` | choose who plans, codes, reviews and resolves conflicts (and each agent's model: `m`) |
-| `/agents` | the agents, their models, and whether they work on this machine |
-| `/providers` | API providers: store a key, fetch the model list, add an agent from a model |
+| `/plan GOAL` | plan first, run after you confirm |
+| `/agents` · `/providers` | the agents and whether they work here · API providers, keys and models |
 | `/planning always\|auto\|never` | how much planning a goal gets |
-| `/repo PATH` · `/runs` · `/doctor` · `/init` · `/help` · `/clear` · `/quit` | |
+| `/memory [add TEXT\|remove N\|clear]` | standing notes for this repository (`# text` adds one) |
+| `/status` · `/cost` | versions, sandbox, agents, unfinished runs · what recent runs cost |
+| `/runs` · `/open [RUN]` · `/resume [RUN]` · `/cancel [RUN]` | history · split-view dashboard · continue an interrupted run · cancel |
+| `/repo PATH` · `/doctor` · `/init` · `/theme [NAME]` · `/export [PATH]` · `/help` · `/clear` · `/quit` | |
 
 ### Watching several agents at once
 When the orchestrator gives work to several agents at the same time, the run's dashboard splits into a live pane per
@@ -113,8 +128,8 @@ multigenz agents list | run              inspect adapters; run ONE sandboxed age
 multigenz plan "<goal>" [--out plan.json]   planner agent proposes a DAG; validated; nothing executed
 multigenz run "<goal>" --repo R [--planning auto|always|never] [--plan-file plan.json] [--detach]
 multigenz runs list | show | events | audit | logs | cancel | resume
-multigenz  (no arguments, on a terminal)  interactive home: the pet, the team and its models, a prompt for goals,
-                                         /commands (/model /team /agents /providers /planning /repo /runs /doctor)
+multigenz  (no arguments, on a terminal)  interactive home: the pet, the team and its models, a prompt for goals
+                                         with inline progress, plan-first mode, /commands, @ files, # notes
 multigenz tui [--team | --runs]          the same TUI, opened on the home, Team or run-list screen: history, live
                                          task states, redacted logs, cancel, doctor, roles, models, API providers
 ```
@@ -133,7 +148,7 @@ commits before continuing and never re-executes finished work.
 | `rootless-container` sandbox | argv construction unit-tested | **never run against a live runtime** |
 | Installer and download page | full install/upgrade/uninstall into a throwaway HOME, `curl … \| bash` from the served page, page checked in Chromium (desktop/phone, light/dark) | the public site is not deployed yet |
 | LiteLLM adapter | injected fake completion | no live provider call |
-| TUI (home prompt, /commands, Team, models, providers, runs) | Textual pilot tests, including a goal typed at the prompt that runs to a merged commit on its run branch | not manually exercised in a real terminal |
+| TUI (home prompt, menus, modes, inline progress, /commands, Team, models, providers, runs) | Textual pilot tests, including a goal typed at the prompt that runs to a merged commit on its run branch, plan first (declined, then confirmed), Esc cancelling a run, `/resume`; plan first with real opencode and Codex | not manually exercised in a real terminal |
 | Split view | pilot tests: three scripted agents working at once show three live panes, each with only its own output, secrets redacted; and real opencode, Codex and Cline working at the same time on three planned tasks (local scripted model) | not manually exercised in a real terminal |
 | Choosing a model | real opencode, Codex, Cline and Hermes binaries: the model set with `agents model` is the one every model request asks for (local scripted server); Claude Code's `--model` checked against its real `--help` | no run against a real provider here |
 
@@ -147,6 +162,7 @@ garbage collection / retention of worktrees (nothing is ever deleted), distribut
 4. [docs/OPERATIONS.md](docs/OPERATIONS.md) – policy, profiles, state layout, recovery
 5. [docs/SECURITY.md](docs/SECURITY.md) – threat model, controls, residual risks
 6. [docs/TESTING.md](docs/TESTING.md) – how to run the suites, results, simulated parts
-7. [config/policy.example.yaml](config/policy.example.yaml), [config/policy.userns.example.yaml](config/policy.userns.example.yaml),
+7. [docs/TUI_COMPARISON.md](docs/TUI_COMPARISON.md) – the TUI compared with Claude Code's, feature by feature
+8. [config/policy.example.yaml](config/policy.example.yaml), [config/policy.userns.example.yaml](config/policy.userns.example.yaml),
    [config/policy.claude.example.yaml](config/policy.claude.example.yaml)
-8. [install.sh](install.sh), [site/](site/) – installer and download page
+9. [install.sh](install.sh), [site/](site/) – installer and download page

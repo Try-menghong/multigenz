@@ -5,7 +5,7 @@ import subprocess
 from rich.text import Text
 
 from multigenz.config import parse_policy
-from multigenz.tui.home import COMMANDS, complete, git_info, hints_for, team_lines, tilde
+from multigenz.tui.home import git_info, plan_text, team_lines, tilde
 from multigenz.tui.mascot import HEIGHT, PIXELS, WIDTH, mascot, mascot_lines
 
 
@@ -33,25 +33,22 @@ def pol():
 def test_team_summary_shows_roles_with_their_models():
     rows = dict(team_lines(pol()))
     assert rows["planning"].startswith("auto:")
-    assert rows["planner"].startswith("claude (opus)") and "only with planning: always" in rows["planner"]
+    assert rows["planner"].startswith("claude (opus)") and "only with planning: always, and /plan" in rows["planner"]
     assert rows["workers"] == "codex (default model) → claude (opus)"
     assert rows["conflicts"] == "same as the workers"
     assert rows["reviewer"].startswith("none")
     assert rows["agents"] == "claude (opus) · codex (default model)" and rows["disabled"] == "cline"
 
 
-def test_command_hints_and_tab_completion():
-    p = pol()
-    assert [h for h, _ in hints_for("/", p)] == list(COMMANDS)
-    assert [h for h, _ in hints_for("/pl", p)] == ["/planning"]
-    assert [h for h, _ in hints_for("/model c", p)] == ["claude", "codex", "cline"]
-    assert [h for h, _ in hints_for("/planning a", p)] == ["always", "auto"]
-    assert hints_for("build me an api", p) == []
-    assert complete("/mo", p) == "/model "
-    assert complete("/model cla", p) == "/model claude "
-    assert complete("/model c", p) == "/model c"                 # ambiguous: unchanged
-    assert complete("/planning n", p) == "/planning never "
-    assert complete("/p", p) == "/p"                              # /providers or /planning
+def test_plan_text_lists_tasks_paths_and_order():
+    from multigenz.contracts.task import PlanDocument, TaskSpec
+
+    plan = PlanDocument(summary="two parts", tasks=[
+        TaskSpec(task_id="api", title="the API", objective="o", allowed_paths=["api/"]),
+        TaskSpec(task_id="docs", title="the docs", objective="o", allowed_paths=["docs/"], dependencies=["api"])])
+    text = plan_text(plan).plain
+    assert text.startswith("Plan: two parts") and "1. api  the API" in text and "2. docs" in text
+    assert "may change: docs/" in text and "after: api" in text
 
 
 def test_git_info_finds_the_repository_and_branch(tmp_path):

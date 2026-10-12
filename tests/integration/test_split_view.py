@@ -57,6 +57,9 @@ async def test_three_agents_working_at_once_get_three_live_panes(tmp_path, repo,
         for ch in "Build an api, a web app and docs":
             await pilot.press("space" if ch == " " else ch)
         await pilot.press("enter")
+        home = app.screen
+        assert await wait_for(pilot, lambda: bool(home.watching))      # progress inline on the home screen ...
+        await pilot.press("ctrl+o")                                      # ... and the split view one key away
         assert await wait_for(pilot, lambda: isinstance(app.screen, RunScreen))
         screen = app.screen
         grid = screen.query_one("#agents", AgentGrid)

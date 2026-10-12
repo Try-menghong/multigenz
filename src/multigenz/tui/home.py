@@ -1,7 +1,9 @@
 """The interactive home screen (what ``multigenz`` opens on a terminal): the pet, the team and its models, a prompt.
 
-Type a goal and press Enter to start a run in the current repository (agents work on run-owned branches; the working
-tree is never touched). Type ``/`` for commands: /model, /team, /providers, /planning, /repo, /runs, /doctor, ...
+Type a goal and press Enter: a run starts in the current repository (agents work on run-owned branches; the working
+tree is never touched) and its progress is shown right here, a spinner and a checklist of its tasks, until it ends.
+Shift+Tab switches to *plan first* (see the plan, then confirm). ``/`` opens the command menu, ``@`` mentions a file,
+``#`` adds a standing note for this repository, ``?`` lists the shortcuts.
 """
 
 from __future__ import annotations
@@ -9,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import os
 import subprocess
+from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
 
@@ -18,33 +21,51 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
-from textual.suggester import SuggestFromList
-from textual.widgets import Footer, Input, RichLog, Static
+from textual.widgets import Footer, OptionList, RichLog, Static, TextArea
+from textual.widgets.option_list import Option
 
 from multigenz import __version__
 from multigenz.config import ROLE_NAMES, Policy, load_policy
+from multigenz.tui.complete import PLANNING_MODES, Item, common_prefix, completions, repo_files
 from multigenz.tui.mascot import mascot
+from multigenz.tui.prompt import PromptArea
 
 COMMANDS: dict[str, str] = {
     "/model": "change the model an agent uses: /model [agent] [model|default]",
     "/team": "choose who plans, codes, reviews and resolves conflicts",
+    "/plan": "plan a goal and run it only after you confirm: /plan GOAL",
     "/agents": "list the agents, their models and whether they work here",
     "/providers": "API providers: store a key, fetch the models, add an agent",
     "/planning": "show or set planning: /planning always|auto|never",
+    "/memory": "standing notes added to every goal here: /memory [add TEXT|remove N|clear]",
+    "/status": "version, repository, policy, sandbox, agents and runs",
+    "/cost": "what recent runs cost (API agents; CLI subscriptions are not metered)",
+    "/runs": "run history",
+    "/open": "open a run's dashboard with a live pane per agent: /open [RUN]",
+    "/resume": "continue an interrupted run: /resume [RUN]",
+    "/cancel": "cancel a run (work done so far is kept): /cancel [RUN]",
     "/repo": "show or change the repository goals run in: /repo PATH",
-    "/runs": "run history and live run dashboards",
     "/doctor": "check git, the sandbox and the agents",
     "/init": "create a starter policy with the agents installed here",
+    "/theme": "switch the colour theme: /theme [NAME]",
+    "/export": "save this session's messages to a file and the clipboard: /export [PATH]",
     "/help": "show this list",
     "/clear": "clear the messages",
     "/quit": "leave MultiGenz (runs keep going in the background)",
 }
-ALIASES = {"/exit": "/quit", "/q": "/quit", "/?": "/help", "/models": "/model", "/roles": "/team"}
-PLANNING_MODES = {
-    "always": "a planner agent splits every goal into tasks first",
-    "auto": "one worker takes the goal and asks for subagents only when needed",
-    "never": "one worker does the whole goal (cheapest)",
-}
+ALIASES = {"/exit": "/quit", "/q": "/quit", "/?": "/help", "/models": "/model", "/roles": "/team",
+           "/dashboard": "/open", "/notes": "/memory"}
+MODES = {"run": ("▶ run", "a goal starts a run right away"),
+         "plan": ("⏸ plan first", "a goal is planned first; nothing runs until you confirm")}
+SHORTCUTS = [
+    ("Enter", "send"),
+    ("\\ Enter  or  Ctrl+J", "new line (Shift+Enter / Alt+Enter too, where the terminal sends them)"),
+    ("Shift+Tab", "switch run / plan first"), ("/", "commands"), ("@", "mention a file of the repository"),
+    ("# note", "standing note for this repository"), ("↑ ↓", "history (or move in the menu)"),
+    ("Tab", "complete"), ("Esc", "close the menu · clear the prompt · cancel the running run"),
+    ("Ctrl+O", "dashboard of the current run (split view)"), ("Ctrl+T", "team"), ("Ctrl+R", "runs"),
+    ("Ctrl+L", "clear the messages"), ("Ctrl+Q", "quit"),
+]
 
 
 def git_info(path: Path) -> tuple[Path | None, str | None]:
@@ -92,7 +113,7 @@ def team_lines(pol: Policy) -> list[tuple[str, str]]:
         else:
             value = "automatic"
         if role == "planner" and pol.orchestrator.planning != "always":
-            value += "  (used only with planning: always)"
+            value += "  (used only with planning: always, and /plan)"
         rows.append((titles[role], value))
     on = [agent_label(pol, n) for n, c in pol.agents.items() if c.enabled]
     off = [n for n, c in pol.agents.items() if not c.enabled]
@@ -102,50 +123,52 @@ def team_lines(pol: Policy) -> list[tuple[str, str]]:
     return rows
 
 
-def hints_for(value: str, pol: Policy | None) -> list[tuple[str, str]]:
-    """What to show under the prompt while a command is being typed."""
-    if not value.startswith("/"):
-        return []
-    head, sep, rest = value.partition(" ")
-    if not sep:
-        return [(c, d) for c, d in COMMANDS.items() if c.startswith(head.lower())]
-    cmd = ALIASES.get(head.lower(), head.lower())
-    if cmd == "/model" and pol is not None and " " not in rest.strip():
-        return [(n, agent_label(pol, n).split(" ", 1)[1]) for n in pol.agents if n.startswith(rest.strip())]
-    if cmd == "/planning":
-        return [(m, d) for m, d in PLANNING_MODES.items() if m.startswith(rest.strip())]
-    return []
-
-
-def complete(value: str, pol: Policy | None) -> str:
-    """Tab completion: a command name, then (for /model and /planning) an agent or a mode."""
-    options = [h for h, _ in hints_for(value, pol)]
-    if not options:
-        return value
-    head, sep, rest = value.partition(" ")
-    typed = rest.strip() if sep else head
-    prefix = os.path.commonprefix(options) if len(options) > 1 else options[0] + " "
-    if len(prefix.rstrip()) < len(typed):
-        return value
-    return (f"{head} {prefix}" if sep else prefix)
+def plan_text(plan) -> Text:
+    """A plan as a numbered list: task, title, the files it may change, what it waits for."""
+    out = Text()
+    out.append(f"Plan: {plan.summary or 'no summary'}", "bold")
+    for i, t in enumerate(plan.tasks, 1):
+        out.append(f"\n  {i}. ", "dim")
+        out.append(t.task_id, "bold cyan")
+        out.append(f"  {t.title}")
+        out.append(f"\n     may change: {', '.join(t.allowed_paths)}", "dim")
+        if t.dependencies:
+            out.append(f"   after: {', '.join(t.dependencies)}", "dim")
+        if t.required_capabilities:
+            out.append(f"   needs: {', '.join(t.required_capabilities)}", "dim")
+    return out
 
 
 class HomeScreen(Screen):
     BINDINGS = [
+        Binding("enter", "enter", "Send", show=False, priority=True),
+        Binding("shift+enter,alt+enter,ctrl+j", "newline", "New line", show=False, priority=True),
+        Binding("up", "arrow(-1)", "Previous", show=False, priority=True),
+        Binding("down", "arrow(1)", "Next", show=False, priority=True),
+        Binding("tab", "tab", "Complete", show=False, priority=True),
+        Binding("escape", "escape", "Close / clear / cancel", show=False, priority=True),
+        Binding("shift+tab", "cycle_mode", "Run / plan first", priority=True),
+        Binding("ctrl+o", "dashboard", "Dashboard"),
         Binding("ctrl+t", "command('/team')", "Team"),
         Binding("ctrl+r", "command('/runs')", "Runs"),
         Binding("ctrl+l", "command('/clear')", "Clear"),
-        Binding("tab", "complete", "Complete", show=False, priority=True),
-        Binding("up", "history(-1)", "Previous", show=False),
-        Binding("down", "history(1)", "Next", show=False),
-        Binding("escape", "clear_input", "Clear input", show=False),
     ]
     BLINK_EVERY = 4.0
+    TICK = 0.25
 
     def __init__(self) -> None:
         super().__init__()
-        self.history: list[str] = []
-        self.hist_pos = 0
+        self.mode = "run"
+        self.items: list[Item] = []
+        self.span = (0, 0)
+        self.menu_dismissed_for: str | None = None
+        self.watching: list[str] = []        # runs started (or resumed) here whose progress is shown inline
+        self.planning_since: datetime | None = None
+        self.frame = 0
+        self.files: list[str] = []
+        self.files_repo: Path | None = None
+        self.history = None
+        self.repo_info: tuple[Path | None, str | None] = (None, None)
 
     # -- layout ---------------------------------------------------------------------------------------------------
     def compose(self) -> ComposeResult:
@@ -156,36 +179,50 @@ class HomeScreen(Screen):
             yield Static("", id="home-team")
             yield Static("", id="home-recent")
         yield RichLog(id="home-log", wrap=True, markup=False, highlight=False)
-        yield Static("", id="home-hints")
-        yield Input(placeholder="Type a goal and press Enter, e.g. Add a /health endpoint with tests   ·   "
-                                "/ for commands", id="home-input",
-                    suggester=SuggestFromList([*COMMANDS, *ALIASES], case_sensitive=False))
+        yield Static("", id="home-live")
+        yield OptionList(id="home-menu")
+        yield PromptArea(id="home-input")
+        yield Static("", id="statusline")
         yield Footer()
 
     def on_mount(self) -> None:
+        from multigenz.tui.history import PromptHistory
+
+        self.history = PromptHistory(Path(self.app.home) / "prompt-history.jsonl",  # type: ignore[attr-defined]
+                                     self.app.redactor)  # type: ignore[attr-defined]
         self.query_one("#welcome", Vertical).border_title = "MultiGenz"
-        self.query_one("#home-hints", Static).display = False
+        self.query_one("#home-menu", OptionList).display = False
+        self.query_one("#home-live", Static).display = False
+        self.query_one("#home-menu", OptionList).can_focus = False
         self.refresh_info()
         tip = Text()
         tip.append("Type what you want built and press Enter. ", "bold")
         tip.append("The team plans if needed, codes, tests and merges it on a run-owned branch; your working tree is "
                    "never touched.\n")
-        tip.append("/ shows commands · /model changes a model · /team picks who plans, codes and reviews · "
-                   "↑↓ history · ctrl+q quits", "dim")
+        tip.append("/ commands · @ files · # notes · shift+tab plan first · ? shortcuts · ctrl+q quits", "dim")
         self.log_widget.write(tip)
         self.set_interval(self.BLINK_EVERY, self.blink)
-        self.query_one("#home-input", Input).focus()
+        self.set_interval(self.TICK, self.tick)
+        self.prompt.focus()
 
     def on_screen_resume(self) -> None:
         self.refresh_info()  # the team, a model or the planning mode may have changed on another screen
-        self.query_one("#home-input", Input).focus()
+        self.prompt.focus()
 
     @property
     def log_widget(self) -> RichLog:
         return self.query_one("#home-log", RichLog)
 
-    def say(self, text: str, style: str = "") -> None:
-        self.log_widget.write(Text(text, style=style))
+    @property
+    def prompt(self) -> PromptArea:
+        return self.query_one("#home-input", PromptArea)
+
+    @property
+    def menu(self) -> OptionList:
+        return self.query_one("#home-menu", OptionList)
+
+    def say(self, text: str | Text, style: str = "") -> None:
+        self.log_widget.write(text if isinstance(text, Text) else Text(text, style=style))
 
     def blink(self) -> None:
         pet = self.query_one("#mascot", Static)
@@ -196,6 +233,10 @@ class HomeScreen(Screen):
     @property
     def policy_path(self) -> Path:
         return Path(self.app.policy_path)  # type: ignore[attr-defined]
+
+    @property
+    def home(self) -> Path:
+        return Path(self.app.home)  # type: ignore[attr-defined]
 
     def reload_policy(self) -> Policy | None:
         """Re-read the policy file if there is one (other screens save to it)."""
@@ -212,6 +253,7 @@ class HomeScreen(Screen):
     def refresh_info(self) -> None:
         pol = self.reload_policy()
         repo, branch = git_info(self.app.repo)  # type: ignore[attr-defined]
+        self.repo_info = (repo, branch)
         info = Text()
         info.append("Welcome to ", "")
         info.append(f"MultiGenz {__version__}", "bold")
@@ -230,6 +272,14 @@ class HomeScreen(Screen):
             info.append("built-in defaults (no policy file yet: /init creates one)\n", "yellow")
         if pol is None:
             info.append(f"POLICY PROBLEM: {self.app.policy_error}\n", "bold red")  # type: ignore[attr-defined]
+        if repo is not None:
+            from multigenz.notes import read_notes
+
+            notes = read_notes(repo)
+            if notes:
+                info.append("notes    ", "dim")
+                info.append(f"{len(notes)} standing note{'s' if len(notes) != 1 else ''} added to every goal "
+                            "(/memory)\n")
         info.rstrip()
         self.query_one("#home-info", Static).update(info)
         team = Text()
@@ -243,106 +293,347 @@ class HomeScreen(Screen):
         recent.rstrip()
         box = self.query_one("#home-recent", Static)
         box.update(recent)
-        box.display = bool(recent.plain)
+        box.display = bool(recent.plain) and not self.has_class("-compact")
+        if repo != self.files_repo:
+            self.files_repo, self.files = repo, repo_files(repo)
+        self.update_statusline()
 
-    def recent_runs(self, limit: int = 3) -> Text:
+    def _runs(self, limit: int = 20) -> list[dict]:
         from multigenz.core.runs import open_store
 
-        out = Text()
         try:
-            store = open_store(self.app.home, readonly=True)  # type: ignore[attr-defined]
+            store = open_store(self.home, readonly=True)
             try:
-                runs = store.list_runs(limit)
+                return store.list_runs(limit)
             finally:
                 store.close()
         except Exception:  # noqa: BLE001 - no state yet is fine on a first start
-            return out
+            return []
+
+    def recent_runs(self, limit: int = 3) -> Text:
+        out = Text()
+        runs = self._runs(limit)
         if runs:
             out.append("recent runs (/runs)\n", "dim")
         for r in runs:
             color = {"succeeded": "green", "failed": "red", "running": "yellow"}.get(r["status"], "")
             out.append(f"  {r['run_id']}  ")
             out.append(f"{r['status']:<10}", color)
-            out.append(f"  {r['objective'][:70]}\n")
+            out.append(f"  {r['objective'].splitlines()[0][:70] if r['objective'] else ''}\n")
         return out
 
-    # -- prompt ---------------------------------------------------------------------------------------------------
-    @on(Input.Changed, "#home-input")
-    def _typing(self, event: Input.Changed) -> None:
-        hints = hints_for(event.value, self.app.policy)  # type: ignore[attr-defined]
-        box = self.query_one("#home-hints", Static)
-        box.display = bool(hints)
-        if hints:
-            width = max(len(h) for h, _ in hints) + 2
-            text = Text()
-            for i, (h, d) in enumerate(hints[:12]):
-                text.append(("\n" if i else "") + f"  {h:<{width}}", "bold cyan")
-                text.append(d, "dim")
-            box.update(text)
+    def update_statusline(self) -> None:
+        pol = self.app.policy  # type: ignore[attr-defined]
+        label, explain = MODES[self.mode]
+        t = Text()
+        t.append(f" {label}", "bold magenta" if self.mode == "plan" else "bold green")
+        t.append(" (shift+tab)", "dim")
+        repo, branch = self.repo_info
+        if repo is not None:
+            t.append(f"  ·  {tilde(repo)} ({branch})", "dim")
+        if pol is not None:
+            enabled = sum(1 for a in pol.agents.values() if a.enabled)
+            t.append(f"  ·  planning {pol.orchestrator.planning}  ·  {enabled} agent{'s' if enabled != 1 else ''}",
+                     "dim")
+        if self.watching:
+            t.append(f"  ·  ● {len(self.watching)} run{'s' if len(self.watching) != 1 else ''} in progress",
+                     "yellow")
+        t.append("  ·  ? shortcuts", "dim")
+        self.query_one("#statusline", Static).update(t)
 
-    @on(Input.Submitted, "#home-input")
-    def _submitted(self, event: Input.Submitted) -> None:
-        text = event.value.strip()
-        event.input.value = ""
-        if not text:
+    # -- prompt and menu ------------------------------------------------------------------------------------------
+    def _agents_for_menu(self) -> dict[str, str]:
+        pol = self.app.policy  # type: ignore[attr-defined]
+        return {} if pol is None else {n: agent_label(pol, n).split(" ", 1)[1] for n in pol.agents}
+
+    def refresh_menu(self) -> None:
+        text, cursor = self.prompt.text, self.prompt.cursor_offset
+        needs_runs = text.split(" ", 1)[0].lower() in ("/resume", "/cancel", "/open") and " " in text
+        start, end, items = completions(
+            text, cursor, commands={**COMMANDS}, agents=self._agents_for_menu(), files=self.files,
+            runs=self._runs(15) if needs_runs else None, themes=sorted(self.app.available_themes))
+        self.items, self.span = items[:30], (start, end)
+        key = f"{start}:{text[start:cursor]}"
+        show = bool(self.items) and self.menu_dismissed_for != key and not (
+            len(self.items) == 1 and text[start:end].strip() == self.items[0].insert.strip())
+        menu = self.menu
+        menu.clear_options()
+        if show:
+            width = max(len(i.label) for i in self.items) + 2
+            menu.add_options([Option(Text.assemble((f"{i.label:<{width}}", "bold cyan"), (i.detail, "dim")))
+                              for i in self.items])
+            menu.highlighted = 0
+        menu.display = show
+
+    @property
+    def menu_open(self) -> bool:
+        return bool(self.menu.display) and self.menu.option_count > 0
+
+    def accept(self, item: Item) -> None:
+        start, end = self.span
+        self.prompt.replace_span(start, end, item.insert)
+        self.menu_dismissed_for = None
+        self.refresh_menu()
+
+    @on(TextArea.Changed, "#home-input")
+    def _changed(self) -> None:
+        if self.prompt.text == "?":
+            self.prompt.set_text("")
+            self.show_shortcuts()
             return
-        if not self.history or self.history[-1] != text:
-            self.history.append(text)
-        self.hist_pos = len(self.history)
-        if text.startswith("/"):
-            self.run_command(text)
-        else:
-            self.start_goal(text)
+        self.refresh_menu()
 
-    def action_complete(self) -> None:
-        inp = self.query_one("#home-input", Input)
-        if self.focused is inp and inp.value.startswith("/"):
-            inp.value = complete(inp.value, self.app.policy)  # type: ignore[attr-defined]
-            inp.cursor_position = len(inp.value)
-        else:
-            self.focus_next()
+    @on(TextArea.SelectionChanged, "#home-input")
+    def _moved(self) -> None:
+        if self.menu.display or self.prompt.text.startswith("/") or "@" in self.prompt.text:
+            self.refresh_menu()
 
-    def action_history(self, delta: int) -> None:
-        inp = self.query_one("#home-input", Input)
-        if not self.history or self.focused is not inp:
+    def check_action(self, action: str, parameters: tuple) -> bool | None:
+        if not self.is_mounted or self.app.screen is not self:
+            return True
+        try:
+            prompt_focused = self.focused is self.prompt
+        except Exception:  # noqa: BLE001 - not composed yet
+            return True
+        if action == "arrow":
+            if not prompt_focused:
+                return False
+            if self.menu_open:
+                return True
+            if parameters and parameters[0] < 0:
+                return self.prompt.on_first_line and bool(self.history and self.history.entries)
+            return self.prompt.on_last_line and bool(self.history and self.history.pos < len(self.history.entries))
+        if action == "tab":
+            return prompt_focused and (self.menu_open or bool(self.items))
+        if action in ("enter", "newline"):
+            return prompt_focused
+        if action == "escape":
+            return self.menu_open or bool(self.prompt.text) or bool(self.watching)
+        return True
+
+    def action_arrow(self, delta: int) -> None:
+        if self.menu_open:
+            menu = self.menu
+            menu.highlighted = ((menu.highlighted or 0) + delta) % menu.option_count
             return
-        self.hist_pos = max(0, min(len(self.history), self.hist_pos + delta))
-        inp.value = self.history[self.hist_pos] if self.hist_pos < len(self.history) else ""
-        inp.cursor_position = len(inp.value)
+        if self.history is None:
+            return
+        value = self.history.previous(self.prompt.text) if delta < 0 else self.history.next()
+        if value is not None:
+            self.prompt.set_text(value)
 
-    def action_clear_input(self) -> None:
-        self.query_one("#home-input", Input).value = ""
+    def action_tab(self) -> None:
+        if self.menu_open:
+            self.accept(self.items[self.menu.highlighted or 0])
+            return
+        prefix = common_prefix(self.items)
+        start, end = self.span
+        if prefix and len(prefix) > end - start:
+            self.prompt.replace_span(start, end, prefix)
+
+    def action_newline(self) -> None:
+        self.prompt.insert("\n")
+
+    def action_enter(self) -> None:
+        if self.menu_open:
+            item = self.items[self.menu.highlighted or 0]
+            self.accept(item)
+            if not item.final:
+                return
+        elif self.prompt.char_before_cursor() == "\\":   # backslash + Enter: a new line instead of sending
+            offset = self.prompt.cursor_offset
+            self.prompt.replace_span(offset - 1, offset, "\n")
+            return
+        self.submit()
+
+    def action_escape(self) -> None:
+        if self.menu_open:
+            start = self.span[0]
+            self.menu_dismissed_for = f"{start}:{self.prompt.text[start:self.prompt.cursor_offset]}"
+            self.menu.display = False
+            return
+        if self.prompt.text:
+            self.prompt.set_text("")
+            return
+        if self.watching:
+            self.confirm_cancel(self.watching[-1])
+
+    def action_cycle_mode(self) -> None:
+        self.mode = "plan" if self.mode == "run" else "run"
+        self.update_statusline()
+        self.app.notify(f"{MODES[self.mode][0]}: {MODES[self.mode][1]}", timeout=3)
 
     def action_command(self, line: str) -> None:
         self.run_command(line)
 
+    def action_dashboard(self) -> None:
+        self.cmd_open([])
+
+    def show_shortcuts(self) -> None:
+        text = Text("Shortcuts", style="bold")
+        width = max(len(k) for k, _ in SHORTCUTS) + 2
+        for k, d in SHORTCUTS:
+            text.append(f"\n  {k:<{width}}", "bold cyan")
+            text.append(d)
+        self.say(text)
+
+    def compact(self) -> None:
+        """Once the conversation starts, the welcome box keeps only the pet and the essentials (Claude Code's banner
+        scrolls away); /status and /runs show the rest."""
+        self.query_one("#home-team", Static).display = False
+        self.query_one("#home-recent", Static).display = False
+        self.add_class("-compact")
+
+    def submit(self) -> None:
+        text = self.prompt.text.strip()
+        self.prompt.set_text("")
+        self.menu.display = False
+        self.menu_dismissed_for = None
+        if not text:
+            return
+        self.compact()
+        if self.history is not None:
+            self.history.add(text)
+        if text.startswith("/"):
+            self.run_command(text)
+        elif text.startswith("#"):
+            self.cmd_memory(["add", text.lstrip("#").strip()])
+        elif self.mode == "plan":
+            self.plan_first(text)
+        else:
+            self.start_goal(text)
+
     # -- goals ----------------------------------------------------------------------------------------------------
-    def start_goal(self, goal: str) -> None:
+    def _ready_repo(self, goal: str) -> Path | None:
         self.say(f"> {goal}", "bold")
         if self.app.policy is None:  # type: ignore[attr-defined]
             self.say(f"Cannot start: the policy is invalid ({self.app.policy_error}).", "red")  # type: ignore[attr-defined]
-            return
+            return None
         repo, _ = git_info(self.app.repo)  # type: ignore[attr-defined]
         if repo is None:
             self.say(f"Cannot start: {self.app.repo} is not a git repository. Use /repo PATH.", "red")  # type: ignore[attr-defined]
-            return
-        self.say(f"Starting a run in {repo} ...", "dim")
-        self.run_worker(partial(self._submit, goal, repo), group="submit")
+        return repo
 
-    async def _submit(self, goal: str, repo: Path) -> None:
+    def _goal_with_notes(self, goal: str, repo: Path) -> str:
+        from multigenz.notes import read_notes, with_notes
+
+        notes = read_notes(repo)
+        if notes:
+            self.say(f"(with {len(notes)} standing note{'s' if len(notes) != 1 else ''} from /memory)", "dim")
+        return with_notes(goal, notes)
+
+    def start_goal(self, goal: str) -> None:
+        repo = self._ready_repo(goal)
+        if repo is None:
+            return
+        self.say(f"Starting a run in {tilde(repo)} ...", "dim")
+        self.run_worker(partial(self._submit, self._goal_with_notes(goal, repo), repo, None), group="submit")
+
+    async def _submit(self, goal: str, repo: Path, plan) -> None:
         from multigenz.execution.worktree import integration_branch
         from multigenz.policy_edit import short_error
-        from multigenz.tui.app import RunScreen
 
         try:
-            rid = await asyncio.to_thread(self.app.submit_run, goal, repo, None)  # type: ignore[attr-defined]
+            rid = await asyncio.to_thread(self.app.submit_run, goal, repo, None, plan)  # type: ignore[attr-defined]
         except Exception as exc:  # noqa: BLE001 - every rejection (policy, isolation, repo) is shown
             self.say(f"Rejected: {short_error(exc)}", "red")
             return
-        self.say(f"● run {rid} started on branch {integration_branch(rid)}. Opening its dashboard "
-                 "(Esc comes back here; the run keeps going).", "green")
+        self.say(f"● run {rid} started on branch {integration_branch(rid)}; progress below "
+                 "(ctrl+o: a live pane per agent).", "green")
+        self.watch(rid)
         self.refresh_info()
-        self.app.push_screen(RunScreen(rid))
+
+    def plan_first(self, goal: str) -> None:
+        repo = self._ready_repo(goal)
+        if repo is None:
+            return
+        self.say("Planning first: nothing runs until you confirm.", "dim")
+        self.planning_since = datetime.now(UTC)
+        self.run_worker(partial(self._plan, self._goal_with_notes(goal, repo), repo), group="plan")
+
+    async def _plan(self, goal: str, repo: Path) -> None:
+        from multigenz.core.driver import plan_only
+        from multigenz.policy_edit import short_error
+        from multigenz.tui.app import ConfirmScreen
+
+        pol = self.app.policy  # type: ignore[attr-defined]
+        try:
+            plan = await asyncio.to_thread(lambda: asyncio.run(plan_only(pol, goal=goal, repo=repo, home=self.home)))
+        except Exception as exc:  # noqa: BLE001 - a rejected plan, no planner, ...
+            self.say(f"No plan: {short_error(exc)}", "red")
+            return
+        finally:
+            self.planning_since = None
+        self.say(plan_text(plan))
+
+        def decided(yes: bool | None) -> None:
+            if yes:
+                self.say(f"Running the plan ({len(plan.tasks)} tasks) ...", "dim")
+                self.run_worker(partial(self._submit, goal, repo, plan), group="submit")
+            else:
+                self.say("Plan discarded; nothing ran.", "dim")
+
+        self.app.push_screen(ConfirmScreen(f"Run this plan ({len(plan.tasks)} task"
+                                           f"{'s' if len(plan.tasks) != 1 else ''})?"), decided)
+
+    # -- live progress --------------------------------------------------------------------------------------------
+    def watch(self, run_id: str) -> None:
+        if run_id not in self.watching:
+            self.watching.append(run_id)
+        self.tick()
+
+    def tick(self) -> None:
+        from multigenz.tui.live import SPINNER, TERMINAL_RUN, render, snapshot, summary
+
+        self.frame += 1
+        live = self.query_one("#home-live", Static)
+        parts: list[Text] = []
+        if self.planning_since is not None:
+            secs = int((datetime.now(UTC) - self.planning_since).total_seconds())
+            parts.append(Text.assemble((f"{SPINNER[self.frame % len(SPINNER)]} ", "bold magenta"),
+                                       ("Planning… ", "bold"), (f"{secs}s · the planner reads the repository", "dim")))
+        for rid in list(self.watching):
+            try:
+                snap = snapshot(self.home, rid)
+            except Exception:  # noqa: BLE001 - the database may be busy for a moment
+                continue
+            if snap is None:
+                self.watching.remove(rid)
+                continue
+            if snap["run"]["status"] in TERMINAL_RUN:
+                self.watching.remove(rid)
+                self.say(summary(snap, self.home))
+                self.app.bell()
+                self.refresh_info()
+                continue
+            parts.append(render(snap, self.frame))
+        live.display = bool(parts)
+        if parts:
+            live.update(Text("\n").join(parts))
+        if self.frame % 8 == 0:
+            self.update_statusline()
+
+    def confirm_cancel(self, run_id: str) -> None:
+        from multigenz.tui.app import ConfirmScreen
+
+        def decided(yes: bool | None) -> None:
+            if yes:
+                self.run_worker(partial(self._cancel, run_id), group="cancel")
+
+        self.app.push_screen(ConfirmScreen(f"Cancel run {run_id}? Agents are stopped; work done so far is kept."),
+                             decided)
+
+    async def _cancel(self, run_id: str) -> None:
+        from multigenz.core.driver import cancel_run
+        from multigenz.policy_edit import short_error
+
+        try:
+            msg = await asyncio.to_thread(lambda: asyncio.run(cancel_run(self.home, run_id)))
+        except Exception as exc:  # noqa: BLE001
+            self.say(f"Not cancelled: {short_error(exc)}", "red")
+            return
+        self.say(f"run {run_id}: {msg}", "yellow")
+        self.watch(run_id)
 
     # -- commands -------------------------------------------------------------------------------------------------
     def run_command(self, line: str) -> None:
@@ -353,6 +644,13 @@ class HomeScreen(Screen):
             return
         if name != "/clear":
             self.say(f"> {line}", "bold")
+        if name == "/plan":
+            goal = line.split(None, 1)[1].strip() if len(parts) > 1 else ""
+            if not goal:
+                self.say("Use /plan GOAL (or Shift+Tab: every goal is planned first).", "yellow")
+                return
+            self.plan_first(goal)
+            return
         getattr(self, "cmd_" + name[1:])(parts[1:])
 
     def _need_file(self) -> bool:
@@ -361,13 +659,31 @@ class HomeScreen(Screen):
         self.say(f"No policy file at {self.policy_path} yet: /init creates one.", "yellow")
         return False
 
+    def _pick_run(self, args: list[str], *, active: bool) -> str | None:
+        runs = self._runs(50)
+        if args:
+            hits = [r["run_id"] for r in runs if r["run_id"].startswith(args[0])]
+            if len(hits) != 1:
+                self.say(f"No single run matches {args[0]!r}." + (" /runs lists them." if not hits else ""), "yellow")
+                return None
+            return hits[0]
+        if self.watching:
+            return self.watching[-1]
+        pool = [r for r in runs if r["status"] not in ("succeeded", "failed", "cancelled", "plan_rejected")] \
+            if active else runs
+        if not pool:
+            self.say("No run to pick: give a run id (/runs lists them).", "yellow")
+            return None
+        return pool[0]["run_id"]
+
     def cmd_help(self, args: list[str]) -> None:
         text = Text()
         for i, (c, d) in enumerate(COMMANDS.items()):
             text.append(("\n" if i else "") + f"  {c:<11}", "bold cyan")
             text.append(d)
-        text.append("\n  anything else is a goal: press Enter to start a run", "dim")
-        self.log_widget.write(text)
+        text.append("\n  anything else is a goal: Enter starts a run (Shift+Tab: plan first) · # adds a note · "
+                    "? shortcuts", "dim")
+        self.say(text)
 
     def cmd_quit(self, args: list[str]) -> None:
         self.app.exit()
@@ -391,6 +707,38 @@ class HomeScreen(Screen):
         from multigenz.tui.app import RunsScreen
 
         self.app.push_screen(RunsScreen())
+
+    def cmd_open(self, args: list[str]) -> None:
+        from multigenz.tui.app import RunScreen
+
+        rid = self._pick_run(args, active=False)
+        if rid:
+            self.app.push_screen(RunScreen(rid))
+
+    def cmd_resume(self, args: list[str]) -> None:
+        from multigenz.core.driver import spawn_detached
+        from multigenz.core.runs import RunPaths
+        from multigenz.core.locks import RunLock
+
+        rid = self._pick_run(args, active=True)
+        if not rid:
+            return
+        run = next((r for r in self._runs(200) if r["run_id"] == rid), None)
+        if run is None or run["status"] in ("succeeded", "failed", "cancelled", "plan_rejected"):
+            self.say(f"run {rid} has ended ({run['status'] if run else 'unknown'}); nothing to resume.", "yellow")
+            return
+        if RunLock.is_held(RunPaths(self.home, rid).lock):
+            self.say(f"run {rid} is already running; following it here.", "dim")
+        else:
+            spawn_detached(self.home, rid)
+            self.say(f"Resuming run {rid}: leases, processes and worktrees are reconciled first; finished work is "
+                     "not redone.", "green")
+        self.watch(rid)
+
+    def cmd_cancel(self, args: list[str]) -> None:
+        rid = self._pick_run(args, active=True)
+        if rid:
+            self.confirm_cancel(rid)
 
     def cmd_doctor(self, args: list[str]) -> None:
         from multigenz.tui.app import DoctorScreen
@@ -448,6 +796,122 @@ class HomeScreen(Screen):
             return
         self.say(f"planning: {mode} - {PLANNING_MODES[mode]}", "green")
         self.refresh_info()
+
+    def cmd_memory(self, args: list[str]) -> None:
+        from multigenz.notes import add_note, clear_notes, notes_path, read_notes, remove_note
+
+        repo, _ = git_info(self.app.repo)  # type: ignore[attr-defined]
+        if repo is None:
+            self.say("Notes belong to a repository: /repo PATH first.", "yellow")
+            return
+        action = args[0].lower() if args else ""
+        try:
+            if action == "add":
+                add_note(repo, " ".join(args[1:]))
+                self.say(f"Noted for {tilde(repo)}: every goal started here now includes it.", "green")
+            elif action in ("remove", "rm") and len(args) == 2 and args[1].isdigit():
+                remove_note(repo, int(args[1]))
+                self.say(f"Removed note {args[1]}.", "green")
+            elif action == "clear":
+                clear_notes(repo)
+                self.say("Removed every note for this repository.", "green")
+            elif action:
+                self.say("Use /memory, /memory add TEXT, /memory remove N or /memory clear (or start a line "
+                         "with #).", "yellow")
+                return
+        except ValueError as exc:
+            self.say(f"Not changed: {exc}", "red")
+            return
+        notes = read_notes(repo)
+        text = Text(f"Standing notes for {tilde(repo)}", style="bold")
+        text.append(f"  ({tilde(notes_path(repo))}; never written into the repository)", "dim")
+        for i, n in enumerate(notes, 1):
+            text.append(f"\n  {i}. ", "dim")
+            text.append(n)
+        if not notes:
+            text.append("\n  none yet: start a line with # to add one, e.g. # use pytest, never unittest", "dim")
+        self.say(text)
+        self.refresh_info()
+
+    def cmd_status(self, args: list[str]) -> None:
+        import platform
+
+        pol = self.app.policy  # type: ignore[attr-defined]
+        repo, branch = git_info(self.app.repo)  # type: ignore[attr-defined]
+        rows = [("version", f"MultiGenz {__version__} · Python {platform.python_version()} · "
+                            f"{platform.system()} {platform.release()}"),
+                ("repo", f"{tilde(repo)} ({branch})" if repo else f"{self.app.repo} (not a git repository)"),  # type: ignore[attr-defined]
+                ("policy", tilde(self.policy_path) if self.policy_path.is_file() else "built-in defaults"),
+                ("state", tilde(self.home)),
+                ("mode", f"{MODES[self.mode][0]}: {MODES[self.mode][1]}")]
+        if pol is not None:
+            ex = pol.execution
+            rows += [("sandbox", f"{ex.isolation} · network {ex.network}"),
+                     ("planning", f"{pol.orchestrator.planning} · up to {pol.orchestrator.max_parallel_agents} agents "
+                                  "at once"),
+                     ("agents", ", ".join(agent_label(pol, n) for n, c in pol.agents.items() if c.enabled) or "none"),
+                     ("pushing", "disabled (MultiGenz never pushes or deploys)")]
+        else:
+            rows.append(("policy", f"PROBLEM: {self.app.policy_error}"))  # type: ignore[attr-defined]
+        active = [r for r in self._runs(50) if r["status"] in ("created", "planning", "running")]
+        rows.append(("runs", f"{len(active)} not finished" + (f": {', '.join(r['run_id'] for r in active[:5])}"
+                                                              if active else "")))
+        text = Text()
+        for i, (k, v) in enumerate(rows):
+            text.append(("\n" if i else "") + f"  {k:<10}", "dim")
+            text.append(v)
+        self.say(text)
+
+    def cmd_cost(self, args: list[str]) -> None:
+        runs = self._runs(20)
+        if not runs:
+            self.say("No runs yet.", "dim")
+            return
+        text = Text("Recent runs", style="bold")
+        total = 0.0
+        unknown = 0
+        for r in runs:
+            spent = r.get("spent_usd") or 0.0
+            total += spent
+            unknown += bool(r.get("cost_unknown"))
+            text.append(f"\n  {r['run_id']}  {r['status']:<13}", "dim")
+            text.append(f"${spent:.4f}")
+            if r.get("cost_unknown"):
+                text.append(" + CLI agent time (not metered)", "dim")
+        text.append(f"\n  total ${total:.4f} over {len(runs)} runs", "bold")
+        if unknown:
+            text.append(f"; {unknown} used CLI agents whose subscription usage MultiGenz cannot measure", "dim")
+        self.say(text)
+
+    def cmd_theme(self, args: list[str]) -> None:
+        themes = sorted(self.app.available_themes)
+        if not args:
+            self.say(f"theme: {self.app.theme}. Others: {', '.join(t for t in themes if t != self.app.theme)}")
+            return
+        if args[0] not in themes:
+            self.say(f"No theme {args[0]!r}. Themes: {', '.join(themes)}", "yellow")
+            return
+        self.app.theme = args[0]
+        save = getattr(self.app, "save_settings", None)
+        if save:
+            save(theme=args[0])
+        self.say(f"theme: {args[0]} (kept for next time)", "green")
+
+    def cmd_export(self, args: list[str]) -> None:
+        lines = ["".join(seg.text for seg in line).rstrip() for line in self.log_widget.lines]
+        text = "\n".join(lines).strip() + "\n"
+        text = self.app.redactor.redact(text)  # type: ignore[attr-defined]
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        path = Path(os.path.expanduser(" ".join(args))) if args else self.home / "exports" / f"session-{stamp}.txt"
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+            os.chmod(path, 0o600)
+        except OSError as exc:
+            self.say(f"Not saved: {exc}", "red")
+            return
+        self.app.copy_to_clipboard(text)
+        self.say(f"Saved {len(lines)} lines to {tilde(path)} (and copied them to the clipboard).", "green")
 
     def cmd_model(self, args: list[str]) -> None:
         from multigenz.tui.model import ModelScreen, PickAgentScreen
@@ -515,4 +979,4 @@ class HomeScreen(Screen):
                 text.append(f"{', '.join(p.modes)}  {p.version or ''}", "dim")
             else:
                 text.append(p.reason or "unavailable", "yellow")
-        self.log_widget.write(text)
+        self.say(text)

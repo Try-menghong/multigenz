@@ -392,7 +392,10 @@ async def test_split_view_shows_three_real_clis_working_at_once(tmp_path, mock, 
         for ch in "Create api.txt, web.txt and docs.txt":
             await pilot.press("space" if ch == " " else ch)
         await pilot.press("enter")
-        assert await wait_for(pilot, lambda: isinstance(app.screen, RunScreen), 60)
+        home_screen = app.screen
+        assert await wait_for(pilot, lambda: bool(home_screen.watching), 60)
+        await pilot.press("ctrl+o")
+        assert await wait_for(pilot, lambda: isinstance(app.screen, RunScreen), 30)
         screen = app.screen
         grid = screen.query_one("#agents", AgentGrid)
 
@@ -421,6 +424,67 @@ async def test_split_view_shows_three_real_clis_working_at_once(tmp_path, mock, 
             assert "\x1b[" not in p.text()                    # colours rendered, not printed as escape codes
         rid = screen.run_id
     for part in parts:
+        shown = subprocess.run(["git", "show", f"multigenz/run-{rid}/integration:{part}.txt"], cwd=repo,
+                               capture_output=True, text=True)
+        assert shown.returncode == 0 and mock_llm.FILE_TEXT in shown.stdout, part
+
+
+async def test_plan_first_mode_with_real_clis(tmp_path, mock, monkeypatch):
+    """Shift+Tab (plan first): opencode plans read-only, the plan is shown, nothing runs until it is confirmed; then
+    opencode and Codex carry out exactly that plan."""
+    from multigenz.config import load_policy
+    from multigenz.core.runs import open_store
+    from multigenz.tui.app import ConfirmScreen, MultiGenzApp
+
+    clis = ("opencode", "codex")
+    if not all(which(c) for c in clis):
+        pytest.skip("needs opencode and codex")
+    base_url, log = mock
+    monkeypatch.setattr(mock_llm, "PLAN_PARTS", ["alpha", "beta"])
+    files = provider_files(tmp_path, base_url)
+    policy = write_policy(tmp_path, {c: ["architecture", "coding"] for c in clis}, files,
+                          extra={c: {"max_concurrent": 1} for c in clis})
+    pol = json.loads(policy.read_text())
+    pol["orchestrator"].update(planning="never", max_parallel_agents=2)
+    pol["roles"] = {"planner": ["opencode"], "worker": list(clis)}
+    pol["validation"]["profiles"]["exists"]["commands"][0]["argv"] = ["/usr/bin/test", "-f", "README.md"]
+    policy.write_text(json.dumps(pol))
+    repo = make_repo(tmp_path)
+    for k, v in {"MOCK_API_KEY": "dummy", "OPENAI_API_KEY": "dummy", "PATH": os.environ["PATH"] + ":" + SEARCH}.items():
+        monkeypatch.setenv(k, v)
+    state = tmp_path / "state"
+    app = MultiGenzApp(state, policy=load_policy(policy), policy_path=policy, repo=repo)
+
+    async def wait_for(pilot, cond, seconds):
+        for _ in range(int(seconds * 10)):
+            await pilot.pause(0.1)
+            if cond():
+                return True
+        return False
+
+    def log_text(screen):
+        return " ".join("".join(s.text for s in ln).rstrip() for ln in screen.query_one("#home-log").lines)
+
+    async with app.run_test(size=(160, 45)) as pilot:
+        home = app.screen
+        await pilot.press("shift+tab")
+        for ch in "Create alpha.txt and beta.txt":
+            await pilot.press("space" if ch == " " else ch)
+        await pilot.press("enter")
+        assert await wait_for(pilot, lambda: isinstance(app.screen, ConfirmScreen), 180), log_text(home)
+        assert "1. alpha" in log_text(home) and "2. beta" in log_text(home)
+        st = open_store(state, readonly=True)
+        assert st.list_runs() == []                                  # planned, nothing started
+        st.close()
+        await pilot.press("y")
+        assert await wait_for(pilot, lambda: bool(home.watching), 60)
+        rid = home.watching[-1]
+        assert await wait_for(pilot, lambda: f"Run {rid} succeeded" in log_text(home), 400), log_text(home)
+    st = open_store(state, readonly=True)
+    assert sorted(t["task_id"] for t in st.list_tasks(rid)) == ["alpha", "beta"]
+    assert {a["provider"] for a in st.list_attempts(rid)} == set(clis)
+    st.close()
+    for part in ("alpha", "beta"):
         shown = subprocess.run(["git", "show", f"multigenz/run-{rid}/integration:{part}.txt"], cwd=repo,
                                capture_output=True, text=True)
         assert shown.returncode == 0 and mock_llm.FILE_TEXT in shown.stdout, part
